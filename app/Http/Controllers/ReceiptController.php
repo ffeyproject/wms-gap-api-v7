@@ -428,8 +428,8 @@ class ReceiptController extends Controller
 
                 if (count($details) > 0) {
                     foreach ($details as $det) {
-                        $id_item = $det['id_item'];
-                        $note_item = $det['note_item'];
+                        $id_item = $det['id_item'] ?? $det['id'] ?? null;
+                        $note_item = $det['note_item'] ?? $det['note'] ?? '';
 
                         $sql="UPDATE public.inspecting_item
                         SET
@@ -507,8 +507,8 @@ class ReceiptController extends Controller
             if ($updateReject) {
                 if (count($details) > 0) {
                     foreach ($details as $det) {
-                        $id_item = $det['id_item'];
-                        $note_item = $det['note_item'];
+                        $id_item = $det['id_item'] ?? $det['id'] ?? null;
+                        $note_item = $det['note_item'] ?? $det['note'] ?? '';
 
                         $sql="UPDATE public.inspecting_mkl_bj_items
                         SET
@@ -569,9 +569,9 @@ class ReceiptController extends Controller
 
             $sql = "UPDATE public.trn_inspecting
                     SET status = 4,
-                        delivered_by = $update_by,
+                        delivered_by = '$update_by',
                         delivered_at = cast(extract(epoch from current_timestamp) as integer)
-                    WHERE id=$id";
+                    WHERE id='$id'";
 
             $updateReceipt = DB::UPDATE($sql);
 
@@ -627,16 +627,16 @@ class ReceiptController extends Controller
 
                 if (count($details) > 0) {
                     foreach ($details as $det) {
-                        $id_item = $det['id_item'];
-                        $qty_item = $det['qty_item'];
-                        $qty_sum_item = $det['qty_sum_item'];
-                        $grade_item = $det['grade_item'];
-                        $note_item = $det['note_item'];
-                        $qr_code_item = $det['qr_code_item'];
-                        $qr_code_desc_item = $det['qr_code_desc_item'];
-                        $is_head_item = $det['is_head_item'];
+                        $id_item = $det['id_item'] ?? $det['id'] ?? null;
+                        $qty_item = $det['qty_item'] ?? $det['qty'] ?? 0;
+                        $qty_sum_item = $det['qty_sum_item'] ?? $det['qty_sum'] ?? 0;
+                        $grade_item = $det['grade_item'] ?? $det['grade'] ?? null;
+                        $note_item = $det['note_item'] ?? $det['note'] ?? '';
+                        $qr_code_item = $det['qr_code_item'] ?? $det['qr_code'] ?? '';
+                        $qr_code_desc_item = $det['qr_code_desc_item'] ?? $det['qr_code_desc'] ?? '';
+                        $is_head_item = $det['is_head_item'] ?? $det['is_head'] ?? 0;
 
-                        if ($is_head_item == 1) {
+                        if ($is_head_item == 1 && $id_item !== null) {
                             $sql="INSERT INTO public.trn_gudang_jadi
                             (
                                 jenis_gudang,
@@ -741,15 +741,15 @@ class ReceiptController extends Controller
             if ($updateReceipt) {
                 if (count($details) > 0) {
                     foreach ($details as $det) {
-                        $id_item = $det['id_item'];
-                        $qty_item = $det['qty_item'];
-                        $qty_sum_item = $det['qty_sum_item'];
-                        $grade_item = $det['grade_item'];
-                        $qr_code_item = $det['qr_code_item'];
-                        $qr_code_desc_item = $det['qr_code_desc_item'];
-                        $is_head_item = $det['is_head_item'];
+                        $id_item = $det['id_item'] ?? $det['id'] ?? null;
+                        $qty_item = $det['qty_item'] ?? $det['qty'] ?? 0;
+                        $qty_sum_item = $det['qty_sum_item'] ?? $det['qty_sum'] ?? 0;
+                        $grade_item = $det['grade_item'] ?? $det['grade'] ?? null;
+                        $qr_code_item = $det['qr_code_item'] ?? $det['qr_code'] ?? '';
+                        $qr_code_desc_item = $det['qr_code_desc_item'] ?? $det['qr_code_desc'] ?? '';
+                        $is_head_item = $det['is_head_item'] ?? $det['is_head'] ?? 0;
 
-                        if ($is_head_item == 1) {
+                        if ($is_head_item == 1 && $id_item !== null) {
                             $sql="INSERT INTO public.trn_gudang_jadi
                             (
                                 jenis_gudang,
