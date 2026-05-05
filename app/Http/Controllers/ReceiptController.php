@@ -13,6 +13,12 @@ require 'helpers.php';
 
 class ReceiptController extends Controller
 {
+    const STATUS_APPROVED = 3;
+    const STATUS_APPROVED_PARTIAL = 5;
+
+    const STATUS_POSTED = 2;
+    const STATUS_POSTED_PARTIAL = 4;
+
     protected function logKartuDyeing(Request $request, $actionName, $kartuProsesId = null, $description = null)
     {
         $userId = $request->json()->get('update_by');
@@ -59,13 +65,7 @@ class ReceiptController extends Controller
                     LEFT JOIN public.trn_kartu_proses_printing prnt ON(ins.kartu_process_printing_id=prnt.id)
                     LEFT JOIN public.trn_kartu_proses_dyeing dyg ON(ins.kartu_process_dyeing_id=dyg.id)
                     LEFT JOIN public.trn_memo_repair memo ON(ins.memo_repair_id=memo.id)
-                    WHERE ins.status = 3
-                    OR (ins.status = 4 AND ins.id IN (
-                        SELECT ii.inspecting_id 
-                        FROM public.inspecting_item ii
-                        LEFT JOIN public.trn_gudang_jadi gj ON (gj.trans_from = 'INS' AND gj.id_from = ii.id)
-                        WHERE ii.is_posted = true AND gj.id IS NULL
-                    ))
+                    WHERE ins.status IN (".self::STATUS_APPROVED.", ".self::STATUS_APPROVED_PARTIAL.")
                     ORDER BY ins.id ASC";
 
             $data = DB::SELECT($sql);
@@ -107,13 +107,7 @@ class ReceiptController extends Controller
                     INNER JOIN public.trn_wo wo ON(mklbj.wo_id=wo.id)
                     INNER JOIN public.trn_wo_color color ON(mklbj.wo_color_id=color.id)
                     INNER JOIN public.trn_mo_color mo_color ON(color.mo_color_id=mo_color.id)
-                    WHERE mklbj.status = 2
-                    OR (mklbj.status = 3 AND mklbj.id IN (
-                        SELECT mkl_item.inspecting_id 
-                        FROM public.inspecting_mkl_bj_items mkl_item
-                        LEFT JOIN public.trn_gudang_jadi gj ON (gj.trans_from = 'MKL' AND gj.id_from = mkl_item.id)
-                        WHERE mkl_item.is_posted = true AND gj.id IS NULL
-                    ))
+                    WHERE mklbj.status IN (".self::STATUS_POSTED.", ".self::STATUS_POSTED_PARTIAL.")
                     ORDER BY mklbj.id ASC";
 
             $data = DB::SELECT($sql);
