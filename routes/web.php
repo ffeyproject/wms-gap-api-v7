@@ -65,6 +65,16 @@ $router->group(['prefix' => 'v1'], function() use ($router) {
         $router->post('insert', 'OpnameController@Insert');
     });
 
+    $router->group(['prefix' => 'opname-pcs', 'middleware' => 'auth'], function () use ($router){
+        $router->post('get-list', 'OpnamePcsController@GetList');
+        $router->post('get-detail', 'OpnamePcsController@GetDetail');
+        $router->get('get-next-code', 'OpnamePcsController@GetNextOpnameCode');
+        $router->post('get-next-code', 'OpnamePcsController@GetNextOpnameCode');
+        $router->post('insert', 'OpnamePcsController@Insert');
+        $router->post('update', 'OpnamePcsController@Update');
+        $router->post('delete', 'OpnamePcsController@Delete');
+    });
+
     $router->group(['prefix' => 'receipt', 'middleware' => 'auth'], function () use ($router){
         $router->get('get-header-inspecting', 'ReceiptController@GetInspectingHeaderList');
         $router->post('get-item-inspecting', 'ReceiptController@GetInspectingItemList');
