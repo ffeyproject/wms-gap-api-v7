@@ -151,7 +151,7 @@ class OpnamePcsController extends Controller
         }
     }
 
-    /**
+     /**
      * Insert / Scan Opname Per Pcs
      */
     public function Insert(Request $request)
@@ -253,10 +253,26 @@ class OpnamePcsController extends Controller
             $existing = $existingQuery->first();
 
             if ($existing) {
+                // Ambil & format tanggal opname dari created_at
+                $opnamedDate = '';
+                if (!empty($existing->created_at)) {
+                    if (is_numeric($existing->created_at)) {
+                        $opnamedDate = date('d-m-Y H:i', (int)$existing->created_at);
+                    } else {
+                        try {
+                            $opnamedDate = Carbon::parse($existing->created_at)->format('d-m-Y H:i');
+                        } catch (\Throwable $t) {
+                            $opnamedDate = (string)$existing->created_at;
+                        }
+                    }
+                }
+
+                $dateMsg = !empty($opnamedDate) ? " pada tanggal " . $opnamedDate : "";
+
                 DB::rollBack();
                 return response()->json([
                     'success'      => false,
-                    'message'      => 'Stock ini sudah pernah di opname!',
+                    'message'      => 'Stock (' . $db_qr_code . ') ini sudah pernah di-opname' . $dateMsg . '!',
                     'is_duplicate' => true,
                     'data'         => $existing,
                 ], 200);
@@ -365,6 +381,7 @@ class OpnamePcsController extends Controller
             ], 200);
         }
     }
+
 
     /**
      * Update data opname pcs
