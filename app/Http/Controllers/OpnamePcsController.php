@@ -339,7 +339,7 @@ class OpnamePcsController extends Controller
 
             $now = time();
 
-            // Insert data baru
+            // Insert data baru ke trn_gudang_jadi_opname_pcs
             $id = DB::table('trn_gudang_jadi_opname_pcs')->insertGetId([
                 'id_trn_gudang_jadi' => $id_trn_gudang_jadi,
                 'opname_code'        => $opname_code,
@@ -358,6 +358,35 @@ class OpnamePcsController extends Controller
                 'updated_by'         => $created_by,
             ]);
 
+            // =========================================================================
+            // FITUR BARU: UPDATE LOKASI BARANG PADA TABEL TRN_GUDANG_JADI
+            // =========================================================================
+            if ($id_trn_gudang_jadi) {
+                DB::table('trn_gudang_jadi')
+                    ->where('id', $id_trn_gudang_jadi)
+                    ->update([
+                        'locs_code'  => $locs_code,
+                        'updated_at' => $now,
+                        'updated_by' => $created_by
+                    ]);
+            } else if (!empty($cleanQrCode)) {
+                DB::table('trn_gudang_jadi')
+                    ->where('qr_code', $cleanQrCode)
+                    ->update([
+                        'locs_code'  => $locs_code,
+                        'updated_at' => $now,
+                        'updated_by' => $created_by
+                    ]);
+            } else {
+                DB::table('trn_gudang_jadi')
+                    ->where('qr_code', $db_qr_code)
+                    ->update([
+                        'locs_code'  => $locs_code,
+                        'updated_at' => $now,
+                        'updated_by' => $created_by
+                    ]);
+            }
+
             DB::commit();
 
             return response()->json([
@@ -368,6 +397,7 @@ class OpnamePcsController extends Controller
                     'opname_code'         => $opname_code,
                     'qr_code'             => $qr_code,
                     'id_trn_gudang_jadi'  => $id_trn_gudang_jadi,
+                    'locs_code'           => $locs_code,
                 ],
             ], 200);
 
@@ -384,7 +414,7 @@ class OpnamePcsController extends Controller
 
 
     /**
-     * Update data opname pcs
+     * Update data opname pcs & sinkronkan lokasi ke trn_gudang_jadi
      */
     public function Update(Request $request)
     {
@@ -423,8 +453,9 @@ class OpnamePcsController extends Controller
                 ], 200);
             }
 
+            $now = time();
             $updateData = [
-                'updated_at' => time(),
+                'updated_at' => $now,
                 'updated_by' => $updated_by,
             ];
 
@@ -446,6 +477,19 @@ class OpnamePcsController extends Controller
             DB::table('trn_gudang_jadi_opname_pcs')
                 ->where('id', $id)
                 ->update($updateData);
+
+            // Jika lokasi diubah, update juga ke trn_gudang_jadi
+            if (!empty($locs_code)) {
+                if (!empty($opnamePcs->id_trn_gudang_jadi)) {
+                    DB::table('trn_gudang_jadi')
+                        ->where('id', $opnamePcs->id_trn_gudang_jadi)
+                        ->update(['locs_code' => $locs_code, 'updated_at' => $now, 'updated_by' => $updated_by]);
+                } else if (!empty($opnamePcs->qr_code)) {
+                    DB::table('trn_gudang_jadi')
+                        ->where('qr_code', $opnamePcs->qr_code)
+                        ->update(['locs_code' => $locs_code, 'updated_at' => $now, 'updated_by' => $updated_by]);
+                }
+            }
 
             DB::commit();
 

@@ -86,13 +86,33 @@ $router->group(['prefix' => 'v1'], function() use ($router) {
         $router->post('submit-receipt-mklbj', 'ReceiptController@ReceiptItemMklbj');
     });
 
+    $router->group(['prefix' => 'trn-kirim-buyer-header', 'middleware' => 'auth'], function () use ($router){
+        $router->get('get-customer-list', 'PengirimanController@GetCustomerList');
+        $router->get('get-headers', 'PengirimanController@GetHeaders');
+        $router->post('get-headers', 'PengirimanController@GetHeaders');
+        $router->post('create', 'PengirimanController@CreateHeader');
+        $router->post('scan-item', 'PengirimanController@ScanItem');
+        $router->post('get-items-header', 'PengirimanController@GetItemsHeader');
+        $router->post('submit', 'PengirimanController@SubmitHeader');
+        $router->post('delete-item', 'PengirimanController@DeleteItem');
+    });
+
     $router->group(['prefix' => 'pengiriman', 'middleware' => 'auth'], function () use ($router){
+        $router->get('get-customer-list', 'PengirimanController@GetCustomerList');
+        $router->get('get-headers', 'PengirimanController@GetHeaders');
+        $router->post('get-headers', 'PengirimanController@GetHeaders');
+        $router->post('create-header', 'PengirimanController@CreateHeader');
+        $router->post('scan-item', 'PengirimanController@ScanItem');
+        $router->post('get-items-header', 'PengirimanController@GetItemsHeader');
+        $router->post('submit-header', 'PengirimanController@SubmitHeader');
+        $router->post('delete-item', 'PengirimanController@DeleteItem');
         $router->get('get-cust-pengiriman', 'PengirimanController@GetCustomerPengiriman');
         $router->post('get-wo-pengiriman', 'PengirimanController@GetWOPengiriman');
         $router->get('get-header-pengiriman', 'PengirimanController@GetHeaderPengiriman');
         $router->post('get-detail-header', 'PengirimanController@GetDetailHeaderPengiriman');
         $router->post('insert-pengiriman', 'PengirimanController@InsertPengiriman');
         $router->post('get-item-wo-pengiriman', 'PengirimanController@getQrScanItemWO');
+        
     });
 
 });
