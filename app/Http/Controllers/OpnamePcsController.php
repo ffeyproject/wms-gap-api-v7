@@ -9,17 +9,17 @@ use Carbon\Carbon;
 
 class OpnamePcsController extends Controller
 {
-    /**
-     * Get list data opname pcs (dengan filter tanggal, opname_code, & status opsional)
+     /**
+     * Get list data opname pcs (dengan filter lokasi/rak, tanggal, opname_code, & status opsional)
      */
     public function GetList(Request $request)
     {
         try {
             $opname_code = $request->json('opname_code') ?? $request->input('opname_code');
+            $locs_code   = $request->json('locs_code') ?? $request->input('locs_code');
             $start_date  = $request->json('start_date') ?? $request->input('start_date');
             $end_date    = $request->json('end_date') ?? $request->input('end_date');
             $status      = $request->json('status') ?? $request->input('status');
-
             $query = DB::table('trn_gudang_jadi_opname_pcs as a')
                 ->select(
                     'a.id',
@@ -41,7 +41,7 @@ class OpnamePcsController extends Controller
                     'b.locs_code as current_gudang_locs_code'
                 )
                 ->leftJoin('trn_gudang_jadi as b', 'a.id_trn_gudang_jadi', '=', 'b.id');
-
+            // 1. Filter Kode Opname (Opsional)
             if (!empty($opname_code)) {
                 $cleanOpnameCode = trim($opname_code);
                 $query->where(function($q) use ($cleanOpnameCode) {
@@ -49,51 +49,55 @@ class OpnamePcsController extends Controller
                       ->orWhere('a.opname_code', 'ILIKE', '%' . $cleanOpnameCode . '%');
                 });
             }
-
+            // 2. Filter Lokasi / Rak (Bisa cari exact atau ILIKE)
+            if (!empty($locs_code) && strtoupper(trim($locs_code)) != 'SEMUA') {
+                $cleanLoc = trim($locs_code);
+                $query->where(function($q) use ($cleanLoc) {
+                    $q->where('a.locs_code', '=', $cleanLoc)
+                      ->orWhere('a.locs_code', 'ILIKE', '%' . $cleanLoc . '%');
+                });
+            }
+            // 3. Filter Status (Opsional)
+            if ($status !== null && $status !== '') {
+                $query->where('a.status', (int)$status);
+            }
+            // 4. Filter Tanggal (Hanya jika start_date dan end_date diisi)
             if (!empty($start_date) && !empty($end_date)) {
                 $startDateObj = null;
                 $endDateObj = null;
                 $formats = ['d-m-Y', 'd/m/Y', 'Y-m-d', 'Y/m/d'];
-
                 foreach ($formats as $fmt) {
                     try {
                         $startDateObj = Carbon::createFromFormat($fmt, $start_date)->startOfDay();
                         break;
                     } catch (\Throwable $th) {}
                 }
-
                 foreach ($formats as $fmt) {
                     try {
                         $endDateObj = Carbon::createFromFormat($fmt, $end_date)->endOfDay();
                         break;
                     } catch (\Throwable $th) {}
                 }
-
                 if ($startDateObj && $endDateObj) {
                     $query->whereBetween('a.created_at', [$startDateObj->timestamp, $endDateObj->timestamp]);
                 }
             }
-
             $data = $query->orderBy('a.id', 'DESC')->get();
-
             $smallintToLetter = [
                 1 => 'A', 2 => 'B', 3 => 'C', 4 => 'D', 5 => 'E',
                 '1' => 'A', '2' => 'B', '3' => 'C', '4' => 'D', '5' => 'E',
             ];
-
             foreach ($data as $item) {
                 if (isset($item->grade)) {
                     $g = (string)$item->grade;
                     $item->grade = isset($smallintToLetter[$g]) ? $smallintToLetter[$g] : $g;
                 }
             }
-
             return response()->json([
                 'success' => true,
                 'message' => 'Berhasil mengambil data opname pcs!',
                 'data'    => $data,
             ], 200);
-
         } catch (\Throwable $th) {
             return response()->json([
                 'success' => false,
@@ -102,6 +106,7 @@ class OpnamePcsController extends Controller
             ], 200);
         }
     }
+
 
     /**
      * Get detail data opname pcs berdasarkan ID
