@@ -49,37 +49,48 @@ class OpnamePcsController extends Controller
                       ->orWhere('a.opname_code', 'ILIKE', '%' . $cleanOpnameCode . '%');
                 });
             }
-            // 2. Filter Lokasi / Rak (Bisa cari exact atau ILIKE)
+            // 2. Filter Lokasi / Rak: Jika ada rak, cari di a.locs_code maupun b.locs_code
             if (!empty($locs_code) && strtoupper(trim($locs_code)) != 'SEMUA') {
                 $cleanLoc = trim($locs_code);
                 $query->where(function($q) use ($cleanLoc) {
                     $q->where('a.locs_code', '=', $cleanLoc)
-                      ->orWhere('a.locs_code', 'ILIKE', '%' . $cleanLoc . '%');
+                      ->orWhere('a.locs_code', 'ILIKE', '%' . $cleanLoc . '%')
+                      ->orWhere('b.locs_code', '=', $cleanLoc)
+                      ->orWhere('b.locs_code', 'ILIKE', '%' . $cleanLoc . '%');
                 });
             }
             // 3. Filter Status (Opsional)
             if ($status !== null && $status !== '') {
                 $query->where('a.status', (int)$status);
             }
-            // 4. Filter Tanggal (Hanya jika start_date dan end_date diisi)
-            if (!empty($start_date) && !empty($end_date)) {
-                $startDateObj = null;
-                $endDateObj = null;
-                $formats = ['d-m-Y', 'd/m/Y', 'Y-m-d', 'Y/m/d'];
-                foreach ($formats as $fmt) {
-                    try {
-                        $startDateObj = Carbon::createFromFormat($fmt, $start_date)->startOfDay();
-                        break;
-                    } catch (\Throwable $th) {}
-                }
-                foreach ($formats as $fmt) {
-                    try {
-                        $endDateObj = Carbon::createFromFormat($fmt, $end_date)->endOfDay();
-                        break;
-                    } catch (\Throwable $th) {}
-                }
-                if ($startDateObj && $endDateObj) {
-                    $query->whereBetween('a.created_at', [$startDateObj->timestamp, $endDateObj->timestamp]);
+            // 4. Filter Tanggal: HANYA BERLAKU JIKA TIDAK MEMILIH RAK SPESIFIK (MODE SEMUA RAK)
+            if (empty($locs_code) || strtoupper(trim($locs_code)) == 'SEMUA') {
+                if (!empty($start_date) && !empty($end_date)) {
+                    $startDateObj = null;
+                    $endDateObj = null;
+                    $formats = ['d-m-Y', 'd/m/Y', 'Y-m-d', 'Y/m/d'];
+                    foreach ($formats as $fmt) {
+                        try {
+                            $startDateObj = Carbon::createFromFormat($fmt, $start_date)->startOfDay();
+                            break;
+                        } catch (\Throwable $th) {}
+                    }
+                    foreach ($formats as $fmt) {
+                        try {
+                            $endDateObj = Carbon::createFromFormat($fmt, $end_date)->endOfDay();
+                            break;
+                        } catch (\Throwable $th) {}
+                    }
+                    if ($startDateObj && $endDateObj) {
+                        $startTs = $startDateObj->timestamp;
+                        $endTs   = $endDateObj->timestamp;
+                        $startDt = $startDateObj->format('Y-m-d H:i:s');
+                        $endDt   = $endDateObj->format('Y-m-d H:i:s');
+                        $query->where(function($q) use ($startTs, $endTs, $startDt, $endDt) {
+                            $q->whereBetween('a.created_at', [$startTs, $endTs])
+                              ->orWhereBetween('a.created_at', [$startDt, $endDt]);
+                        });
+                    }
                 }
             }
             $data = $query->orderBy('a.id', 'DESC')->get();
