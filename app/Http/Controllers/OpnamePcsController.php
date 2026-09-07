@@ -9,8 +9,8 @@ use Carbon\Carbon;
 
 class OpnamePcsController extends Controller
 {
-        /**
-     * Get list data opname pcs (PostgreSQL Compatible)
+     /**
+     * Get list data opname pcs (Hanya mengambil data jika rak dipilih)
      */
     public function GetList(Request $request)
     {
@@ -18,6 +18,14 @@ class OpnamePcsController extends Controller
             $opname_code = $request->json('opname_code') ?? $request->input('opname_code');
             $locs_code   = $request->json('locs_code') ?? $request->input('locs_code');
             $status      = $request->json('status') ?? $request->input('status');
+            // JIKA TIDAK ADA RAK & TIDAK ADA KODE OPNAME YANG DIPILIH, JANGAN TAMPILKAN APA-APA
+            if (empty($locs_code) && empty($opname_code)) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Silakan pilih rak terlebih dahulu untuk melihat data.',
+                    'data'    => [],
+                ], 200);
+            }
             $query = DB::table('trn_gudang_jadi_opname_pcs as a')
                 ->select(
                     'a.id',
@@ -39,15 +47,7 @@ class OpnamePcsController extends Controller
                     'b.locs_code as current_gudang_locs_code'
                 )
                 ->leftJoin('trn_gudang_jadi as b', 'a.id_trn_gudang_jadi', '=', 'b.id');
-            // 1. Filter Kode Opname (ILIKE PostgreSQL)
-            if (!empty($opname_code)) {
-                $cleanOpnameCode = trim($opname_code);
-                $query->where(function($q) use ($cleanOpnameCode) {
-                    $q->where('a.opname_code', '=', $cleanOpnameCode)
-                      ->orWhere('a.opname_code', 'ILIKE', '%' . $cleanOpnameCode . '%');
-                });
-            }
-            // 2. Filter Lokasi / Rak (ILIKE PostgreSQL untuk a.locs_code maupun b.locs_code)
+            // 1. Filter Lokasi / Rak Spesifik (PostgreSQL ILIKE)
             if (!empty($locs_code) && strtoupper(trim($locs_code)) != 'SEMUA') {
                 $cleanLoc = trim($locs_code);
                 $query->where(function($q) use ($cleanLoc) {
@@ -55,6 +55,14 @@ class OpnamePcsController extends Controller
                       ->orWhere('a.locs_code', 'ILIKE', '%' . $cleanLoc . '%')
                       ->orWhere('b.locs_code', '=', $cleanLoc)
                       ->orWhere('b.locs_code', 'ILIKE', '%' . $cleanLoc . '%');
+                });
+            }
+            // 2. Filter Kode Opname (Opsional)
+            if (!empty($opname_code)) {
+                $cleanOpnameCode = trim($opname_code);
+                $query->where(function($q) use ($cleanOpnameCode) {
+                    $q->where('a.opname_code', '=', $cleanOpnameCode)
+                      ->orWhere('a.opname_code', 'ILIKE', '%' . $cleanOpnameCode . '%');
                 });
             }
             // 3. Filter Status (Opsional)
@@ -86,6 +94,7 @@ class OpnamePcsController extends Controller
             ], 200);
         }
     }
+
 
 
     /**
