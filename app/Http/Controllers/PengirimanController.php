@@ -938,7 +938,7 @@ class PengirimanController extends Controller
     }
 
      /**
-     * Submit Header Pengiriman (Ubah status ke Status 2 / Proses Surat Jalan)
+     * Submit Header Pengiriman (Status Draft = 1)
      */
     public function SubmitHeader(Request $request)
     {
@@ -963,18 +963,6 @@ class PengirimanController extends Controller
                 ], 200);
             }
             $header = $headerRes[0];
-            if ($header->status == 2) {
-                DB::commit();
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Header pengiriman sudah berstatus Proses Surat Jalan!',
-                    'data' => [
-                        'header' => $header,
-                        'no_surat_jalan' => $header->no,
-                        'status_label' => 'Proses Surat Jalan'
-                    ]
-                ], 200);
-            }
             // Validasi minimal ada 1 item yang di-scan
             $cekItems = DB::SELECT("
                 SELECT count(i.id) as total
@@ -1015,10 +1003,10 @@ class PengirimanController extends Controller
             if ($request->get('user') && isset($request->get('user')->id)) {
                 $userId = $request->get('user')->id;
             }
-            // UPDATE STATUS KE 2 (PROSES SURAT JALAN) & SIMPAN NOMOR SURAT JALAN
+            // UPDATE STATUS HEADER SEBAGAI DRAFT (STATUS = 1) & SIMPAN NOMOR SURAT JALAN
             $sqlUpdateHeader = "
                 UPDATE public.trn_kirim_buyer_header
-                SET status = 2,
+                SET status = 1,
                     no_urut = $noUrut,
                     no = '$noSuratJalan',
                     updated_at = $now,
@@ -1027,7 +1015,7 @@ class PengirimanController extends Controller
             ";
             DB::UPDATE($sqlUpdateHeader);
 
-            // UPDATE STATUS STOCK BARANG DI GUDANG JADI KE 4 (PROSES SURAT JALAN / SHIPPED)
+            // UPDATE STATUS STOCK BARANG DI GUDANG JADI KE 4 (PROSES SURAT JALAN / SURAT JALAN)
             $sqlUpdateStock = "
                 UPDATE public.trn_gudang_jadi
                 SET status = 4, updated_at = $now, updated_by = $userId
@@ -1044,11 +1032,11 @@ class PengirimanController extends Controller
             $updatedHeader = DB::SELECT("SELECT * FROM public.trn_kirim_buyer_header WHERE id = $header_id")[0];
             return response()->json([
                 'success' => true,
-                'message' => 'Berhasil submit! Status pengiriman berubah menjadi Proses Surat Jalan.',
+                'message' => 'Berhasil submit! Status pengiriman tersimpan sebagai Draft dan status stock masuk ke Surat Jalan.',
                 'data' => [
                     'header' => $updatedHeader,
                     'no_surat_jalan' => $noSuratJalan,
-                    'status_label' => 'Proses Surat Jalan'
+                    'status_label' => 'Draft'
                 ]
             ], 200);
         } catch (\Throwable $th) {

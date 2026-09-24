@@ -29,7 +29,7 @@ class OpnamePcsController extends Controller
             $query = DB::table('trn_gudang_jadi_opname_pcs as a')
                 ->select(
                     'a.id',
-                    'a.id_trn_gudang_jadi',
+                    DB::raw('COALESCE(a.id_trn_gudang_jadi, b.id) as id_trn_gudang_jadi'),
                     'a.opname_code',
                     'a.qr_code',
                     'a.qr_code_desc',
@@ -46,7 +46,13 @@ class OpnamePcsController extends Controller
                     'a.updated_by',
                     'b.locs_code as current_gudang_locs_code'
                 )
-                ->leftJoin('trn_gudang_jadi as b', 'a.id_trn_gudang_jadi', '=', 'b.id');
+                ->leftJoin('trn_gudang_jadi as b', function($join) {
+                    $join->on('a.id_trn_gudang_jadi', '=', 'b.id')
+                         ->orWhere(function($q) {
+                             $q->whereNull('a.id_trn_gudang_jadi')
+                               ->whereColumn('a.qr_code', 'b.qr_code');
+                         });
+                });
             // 1. Filter Lokasi / Rak Spesifik (PostgreSQL ILIKE)
             if (!empty($locs_code) && strtoupper(trim($locs_code)) != 'SEMUA') {
                 $cleanLoc = trim($locs_code);
@@ -116,9 +122,16 @@ class OpnamePcsController extends Controller
             $data = DB::table('trn_gudang_jadi_opname_pcs as a')
                 ->select(
                     'a.*',
+                    DB::raw('COALESCE(a.id_trn_gudang_jadi, b.id) as id_trn_gudang_jadi'),
                     'b.locs_code as current_gudang_locs_code'
                 )
-                ->leftJoin('trn_gudang_jadi as b', 'a.id_trn_gudang_jadi', '=', 'b.id')
+                ->leftJoin('trn_gudang_jadi as b', function($join) {
+                    $join->on('a.id_trn_gudang_jadi', '=', 'b.id')
+                         ->orWhere(function($q) {
+                             $q->whereNull('a.id_trn_gudang_jadi')
+                               ->whereColumn('a.qr_code', 'b.qr_code');
+                         });
+                })
                 ->where('a.id', $id)
                 ->first();
 
@@ -184,14 +197,16 @@ class OpnamePcsController extends Controller
             // Extract IDs & prefixes dari QR code string
             $stock_id = 0;
             $ins_item_id = 0;
+            $ins_type = '';
             $cleanQrCode = null;
 
             if (preg_match('/STK-(\d+)/i', $qr_code, $stkMatches)) {
                 $stock_id = (int)$stkMatches[1];
             }
 
-            if (preg_match('/INS-\d+-(\d+)/i', $qr_code, $insMatches)) {
-                $ins_item_id = (int)$insMatches[1];
+            if (preg_match('/(INS2|INS|MKL)-\d+-(\d+)/i', $qr_code, $insMatches)) {
+                $ins_type = strtoupper($insMatches[1]);
+                $ins_item_id = (int)$insMatches[2];
             }
 
             if (preg_match('/\[?([A-Z0-9]+-\d+(?:-\d+)?)\]?/i', $qr_code, $cleanMatches)) {
@@ -206,7 +221,12 @@ class OpnamePcsController extends Controller
             }
 
             if (!$gudangJadi && $ins_item_id > 0) {
-                $gudangJadi = DB::table('trn_gudang_jadi')->where('source_ref', (string)$ins_item_id)->first();
+                $gudangJadi = DB::table('trn_gudang_jadi')
+                    ->where(function($q) use ($ins_item_id) {
+                        $q->where('id_from', $ins_item_id)
+                          ->orWhere('source_ref', (string)$ins_item_id);
+                    })
+                    ->first();
             }
 
             if (!$gudangJadi && !empty($cleanQrCode)) {
@@ -217,18 +237,78 @@ class OpnamePcsController extends Controller
                 $gudangJadi = DB::table('trn_gudang_jadi')->where('qr_code', $db_qr_code)->first();
             }
 
-            // Fallback for INS scanning if not present in trn_gudang_jadi
+            // Fallback for INS / INS2 / MKL scanning if not present in trn_gudang_jadi
             if (!$gudangJadi && $ins_item_id > 0) {
-                $insItem = DB::table('inspecting_item')->where('id', $ins_item_id)->first();
+                if ($ins_type === 'INS2' || $ins_type === 'MKL') {
+                    $insItem = DB::table('inspecting_mkl_bj_items')->where('id', $ins_item_id)->first();
+                    if ($insItem) {
+                        $gudangJadi = (object)[
+                            'id'           => null,
+                            'qr_code_desc' => $insItem->qr_code_desc ?? $insItem->qr_code ?? $qr_code,
+                            'qty'          => $insItem->qty ?? 0,
+                            'unit'         => 'METER',
+                            'grade'        => $insItem->grade ?? 1,
+                        ];
+                    }
+                } else {
+                    $insItem = DB::table('inspecting_item')->where('id', $ins_item_id)->first();
+                    if ($insItem) {
+                        $gudangJadi = (object)[
+                            'id'           => null,
+                            'qr_code_desc' => $insItem->qr_code_desc ?? $insItem->qr_code ?? $qr_code,
+                            'qty'          => $insItem->qty ?? 0,
+                            'unit'         => 'YARDS',
+                            'grade'        => $insItem->grade ?? 1,
+                        ];
+                    }
+                }
+            }
+
+            // Fallback: cari langsung di tabel inspecting jika belum ketemu
+            if (!$gudangJadi) {
+                $searchQr = !empty($cleanQrCode) ? $cleanQrCode : $db_qr_code;
+                $insMklItem = DB::table('inspecting_mkl_bj_items')
+                    ->where('qr_code', $searchQr)
+                    ->orWhere('qr_code', $db_qr_code)
+                    ->first();
+                if ($insMklItem) {
+                    $gudangJadi = (object)[
+                        'id'           => null,
+                        'qr_code_desc' => $insMklItem->qr_code_desc ?? $insMklItem->qr_code ?? $qr_code,
+                        'qty'          => $insMklItem->qty ?? 0,
+                        'unit'         => 'METER',
+                        'grade'        => $insMklItem->grade ?? 1,
+                    ];
+                }
+            }
+
+            if (!$gudangJadi) {
+                $searchQr = !empty($cleanQrCode) ? $cleanQrCode : $db_qr_code;
+                $insItem = DB::table('inspecting_item')
+                    ->where('qr_code', $searchQr)
+                    ->orWhere('qr_code', $db_qr_code)
+                    ->first();
                 if ($insItem) {
                     $gudangJadi = (object)[
                         'id'           => null,
-                        'qr_code_desc' => $insItem->qr_code ?? $qr_code,
+                        'qr_code_desc' => $insItem->qr_code_desc ?? $insItem->qr_code ?? $qr_code,
                         'qty'          => $insItem->qty ?? 0,
                         'unit'         => 'YARDS',
                         'grade'        => $insItem->grade ?? 1,
                     ];
                 }
+            }
+
+            // =========================================================================
+            // 🛑 VALIDASI: Tolak jika data tidak ditemukan di Stok maupun Inspecting
+            // =========================================================================
+            if (!$gudangJadi) {
+                DB::rollBack();
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Barcode (' . $db_qr_code . ') tidak ditemukan di Stok Gudang Jadi maupun di Inspecting!',
+                    'data'    => null,
+                ], 200);
             }
 
             $id_trn_gudang_jadi = ($gudangJadi && !empty($gudangJadi->id)) ? $gudangJadi->id : null;
