@@ -46,21 +46,14 @@ class OpnamePcsController extends Controller
                     'a.updated_by',
                     'b.locs_code as current_gudang_locs_code'
                 )
-                ->leftJoin('trn_gudang_jadi as b', function($join) {
-                    $join->on('a.id_trn_gudang_jadi', '=', 'b.id')
-                         ->orWhere(function($q) {
-                             $q->whereNull('a.id_trn_gudang_jadi')
-                               ->whereColumn('a.qr_code', 'b.qr_code');
-                         });
-                });
-            // 1. Filter Lokasi / Rak Spesifik (PostgreSQL ILIKE)
+                ->leftJoin('trn_gudang_jadi as b', 'a.id_trn_gudang_jadi', '=', 'b.id');
+
+            // 1. Filter Lokasi / Rak Spesifik (PostgreSQL ILIKE pada tabel opname pcs)
             if (!empty($locs_code) && strtoupper(trim($locs_code)) != 'SEMUA') {
                 $cleanLoc = trim($locs_code);
                 $query->where(function($q) use ($cleanLoc) {
                     $q->where('a.locs_code', '=', $cleanLoc)
-                      ->orWhere('a.locs_code', 'ILIKE', '%' . $cleanLoc . '%')
-                      ->orWhere('b.locs_code', '=', $cleanLoc)
-                      ->orWhere('b.locs_code', 'ILIKE', '%' . $cleanLoc . '%');
+                      ->orWhere('a.locs_code', 'ILIKE', '%' . $cleanLoc . '%');
                 });
             }
             // 2. Filter Kode Opname (Opsional)
@@ -92,7 +85,7 @@ class OpnamePcsController extends Controller
                 'data'    => $data,
             ], 200);
         } catch (\Throwable $th) {
-            Log::error('OpnamePcs GetList PostgreSQL Error: ' . $th->getMessage());
+            Log::error('OpnamePcsController GetList Error: ' . $th->getMessage() . "\n" . $th->getTraceAsString());
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal mengambil data opname pcs: ' . $th->getMessage(),
@@ -125,13 +118,7 @@ class OpnamePcsController extends Controller
                     DB::raw('COALESCE(a.id_trn_gudang_jadi, b.id) as id_trn_gudang_jadi'),
                     'b.locs_code as current_gudang_locs_code'
                 )
-                ->leftJoin('trn_gudang_jadi as b', function($join) {
-                    $join->on('a.id_trn_gudang_jadi', '=', 'b.id')
-                         ->orWhere(function($q) {
-                             $q->whereNull('a.id_trn_gudang_jadi')
-                               ->whereColumn('a.qr_code', 'b.qr_code');
-                         });
-                })
+                ->leftJoin('trn_gudang_jadi as b', 'a.id_trn_gudang_jadi', '=', 'b.id')
                 ->where('a.id', $id)
                 ->first();
 
@@ -150,6 +137,7 @@ class OpnamePcsController extends Controller
             ], 200);
 
         } catch (\Throwable $th) {
+            Log::error('OpnamePcsController GetDetail Error: ' . $th->getMessage() . "\n" . $th->getTraceAsString());
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal mengambil detail opname pcs: ' . $th->getMessage(),
@@ -575,6 +563,7 @@ class OpnamePcsController extends Controller
 
         } catch (\Throwable $th) {
             DB::rollBack();
+            Log::error('OpnamePcsController Update Error: ' . $th->getMessage() . "\n" . $th->getTraceAsString());
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal memperbarui opname pcs: ' . $th->getMessage(),
@@ -622,6 +611,7 @@ class OpnamePcsController extends Controller
 
         } catch (\Throwable $th) {
             DB::rollBack();
+            Log::error('OpnamePcsController Delete Error: ' . $th->getMessage() . "\n" . $th->getTraceAsString());
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal menghapus opname pcs: ' . $th->getMessage(),
@@ -636,25 +626,18 @@ class OpnamePcsController extends Controller
     public function GetNextOpnameCode(Request $request)
     {
         try {
-            $codes = DB::table('trn_gudang_jadi_opname_pcs')
-                ->whereNotNull('opname_code')
-                ->pluck('opname_code');
+            $latest = DB::table('trn_gudang_jadi_opname_pcs')
+                ->where('opname_code', 'ILIKE', 'OPN-PCS-%')
+                ->orderBy('id', 'desc')
+                ->value('opname_code');
 
-            $maxNumber = 0;
-
-            foreach ($codes as $code) {
-                if (preg_match('/OPN-PCS-(\d+)/i', $code, $m)) {
-                    $num = (int)$m[1];
-                    if ($num > $maxNumber) {
-                        $maxNumber = $num;
-                    }
-                }
+            $nextNumber = 1;
+            if ($latest && preg_match('/OPN-PCS-(\d+)/i', $latest, $m)) {
+                $nextNumber = ((int)$m[1]) + 1;
             }
-
-            $nextNumber = $maxNumber + 1;
             $nextCode = sprintf("OPN-PCS-%03d", $nextNumber);
 
-            Log::info("GetNextOpnameCode: maxNumber=$maxNumber, nextCode=$nextCode");
+            Log::info("GetNextOpnameCode: latest=$latest, nextCode=$nextCode");
 
             return response()->json([
                 'success' => true,
@@ -663,7 +646,7 @@ class OpnamePcsController extends Controller
             ], 200);
 
         } catch (\Throwable $th) {
-            Log::error("GetNextOpnameCode Error: " . $th->getMessage());
+            Log::error("GetNextOpnameCode Error: " . $th->getMessage() . "\n" . $th->getTraceAsString());
             return response()->json([
                 'success' => true,
                 'message' => 'Default kode opname',
