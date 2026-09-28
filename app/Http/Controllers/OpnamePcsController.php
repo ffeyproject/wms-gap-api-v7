@@ -9,7 +9,7 @@ use Carbon\Carbon;
 
 class OpnamePcsController extends Controller
 {
-     /**
+    /**
      * Get list data opname pcs (Hanya mengambil data jika rak dipilih)
      */
     public function GetList(Request $request)
@@ -18,7 +18,7 @@ class OpnamePcsController extends Controller
             $opname_code = $request->json('opname_code') ?? $request->input('opname_code');
             $locs_code   = $request->json('locs_code') ?? $request->input('locs_code');
             $status      = $request->json('status') ?? $request->input('status');
-            
+
             // JIKA TIDAK ADA RAK & TIDAK ADA KODE OPNAME YANG DIPILIH, JANGAN TAMPILKAN APA-APA
             if (empty($locs_code) && empty($opname_code)) {
                 return response()->json([
@@ -27,6 +27,7 @@ class OpnamePcsController extends Controller
                     'data'    => [],
                 ], 200);
             }
+
             $query = DB::table('trn_gudang_jadi_opname_pcs as a')
                 ->select(
                     'a.id',
@@ -57,6 +58,7 @@ class OpnamePcsController extends Controller
                       ->orWhere('a.locs_code', 'ILIKE', '%' . $cleanLoc . '%');
                 });
             }
+
             // 2. Filter Kode Opname (Opsional)
             if (!empty($opname_code)) {
                 $cleanOpnameCode = trim($opname_code);
@@ -65,26 +67,32 @@ class OpnamePcsController extends Controller
                       ->orWhere('a.opname_code', 'ILIKE', '%' . $cleanOpnameCode . '%');
                 });
             }
+
             // 3. Filter Status (Opsional)
             if ($status !== null && $status !== '') {
                 $query->where('a.status', (int)$status);
             }
+
             $data = $query->orderBy('a.id', 'DESC')->get();
+
             $smallintToLetter = [
                 1 => 'A', 2 => 'B', 3 => 'C', 4 => 'D', 5 => 'E',
                 '1' => 'A', '2' => 'B', '3' => 'C', '4' => 'D', '5' => 'E',
             ];
+
             foreach ($data as $item) {
                 if (isset($item->grade)) {
                     $g = (string)$item->grade;
                     $item->grade = isset($smallintToLetter[$g]) ? $smallintToLetter[$g] : $g;
                 }
             }
+
             return response()->json([
                 'success' => true,
                 'message' => 'Berhasil mengambil data opname pcs!',
                 'data'    => $data,
             ], 200);
+
         } catch (\Throwable $th) {
             Log::error('OpnamePcsController GetList Error: ' . $th->getMessage() . "\n" . $th->getTraceAsString());
             return response()->json([
@@ -145,7 +153,7 @@ class OpnamePcsController extends Controller
         }
     }
 
-     /**
+    /**
      * Insert / Scan Opname Per Pcs
      */
     public function Insert(Request $request)
@@ -165,7 +173,7 @@ class OpnamePcsController extends Controller
             $remark       = $request->json('remark') ?? $request->input('remark');
             $created_by   = $request->json('created_by') ?? $request->input('created_by') ?? $request->json('user_id') ?? $request->input('user_id') ?? 1;
             if (!is_numeric($created_by)) {
-                $created_by = null;
+                $created_by = 1;
             }
 
             if (empty($qr_code)) {
@@ -185,7 +193,6 @@ class OpnamePcsController extends Controller
             $stock_id = 0;
             $ins_item_id = 0;
             $ins_type = '';
-            $cleanQrCode = null;
 
             if (preg_match('/STK-(\d+)/i', $qr_code, $stkMatches)) {
                 $stock_id = (int)$stkMatches[1];
@@ -196,147 +203,42 @@ class OpnamePcsController extends Controller
                 $ins_item_id = (int)$insMatches[2];
             }
 
-            if (preg_match('/\[?([A-Z0-9]+-\d+(?:-\d+)?)\]?/i', $qr_code, $cleanMatches)) {
-                $cleanQrCode = $cleanMatches[1];
-            }
-
-            $searchQr = !empty($cleanQrCode) ? $cleanQrCode : $db_qr_code;
+            $id_trn_gudang_jadi = null;
             $gudangJadi = null;
 
-            // 1. PRIORITAS UTAMA: Cari langsung berdasarkan EXACT qr_code di trn_gudang_jadi
-            $gudangJadi = DB::table('trn_gudang_jadi')
-                ->where('qr_code', $searchQr)
-                ->orWhere('qr_code', $db_qr_code)
-                ->first();
-
-            // 2. Jika ada stock_id (STK-xxx)
-            if (!$gudangJadi && $stock_id > 0) {
+            // 1. Cari jika scan format STK-xxx
+            if ($stock_id > 0) {
                 $gudangJadi = DB::table('trn_gudang_jadi')->where('id', $stock_id)->first();
-            }
-
-            // 3. Fallback: Cari ke tabel Inspecting yang sesuai jika belum ada di trn_gudang_jadi
-            if (!$gudangJadi && $ins_item_id > 0) {
-                if ($ins_type === 'INS2' || $ins_type === 'MKL') {
-                    // Cari di inspecting_mkl_bj_items
-                    $insItem = DB::table('inspecting_mkl_bj_items')
-                        ->where('id', $ins_item_id)
-                        ->orWhere('qr_code', $searchQr)
-                        ->first();
-
-                    if ($insItem) {
-                        $stokMkl = DB::table('trn_gudang_jadi')
-                            ->where('qr_code', $insItem->qr_code ?? $searchQr)
-                            ->first();
-
-                        if ($stokMkl) {
-                            $gudangJadi = $stokMkl;
-                        } else {
-                            $gudangJadi = (object)[
-                                'id'           => null,
-                                'qr_code_desc' => $insItem->qr_code_desc ?? $insItem->qr_code ?? $qr_code,
-                                'qty'          => $insItem->qty ?? 0,
-                                'unit'         => 'METER',
-                                'grade'        => $insItem->grade ?? 1,
-                            ];
-                        }
-                    }
-                } else {
-                    // Cari di inspecting_item
-                    $insItem = DB::table('inspecting_item')
-                        ->where('id', $ins_item_id)
-                        ->orWhere('qr_code', $searchQr)
-                        ->first();
-
-                    if ($insItem) {
-                        $stokIns = DB::table('trn_gudang_jadi')
-                            ->where('qr_code', $insItem->qr_code ?? $searchQr)
-                            ->first();
-
-                        if ($stokIns) {
-                            $gudangJadi = $stokIns;
-                        } else {
-                            $gudangJadi = (object)[
-                                'id'           => null,
-                                'qr_code_desc' => $insItem->qr_code_desc ?? $insItem->qr_code ?? $qr_code,
-                                'qty'          => $insItem->qty ?? 0,
-                                'unit'         => 'YARDS',
-                                'grade'        => $insItem->grade ?? 1,
-                            ];
-                        }
-                    }
+                if ($gudangJadi) {
+                    $id_trn_gudang_jadi = $gudangJadi->id;
                 }
             }
 
-            // Fallback tambahan berdasarkan QR Code penuh
-            if (!$gudangJadi) {
-                $insMklItem = DB::table('inspecting_mkl_bj_items')
-                    ->where('qr_code', $searchQr)
-                    ->orWhere('qr_code', $db_qr_code)
-                    ->first();
-                if ($insMklItem) {
-                    $gudangJadi = (object)[
-                        'id'           => null,
-                        'qr_code_desc' => $insMklItem->qr_code_desc ?? $insMklItem->qr_code ?? $qr_code,
-                        'qty'          => $insMklItem->qty ?? 0,
-                        'unit'         => 'METER',
-                        'grade'        => $insMklItem->grade ?? 1,
-                    ];
+            // Ekstrak info dari barcode jika format teks pemisah '!'
+            $wo_no = null;
+            $color = '-';
+            if (strpos($qr_code, '!') !== false) {
+                $parts = explode('!', $qr_code);
+                if (isset($parts[1]) && !empty(trim($parts[1]))) {
+                    $wo_no = trim($parts[1]);
+                }
+                if (isset($parts[4]) && !empty(trim($parts[4]))) {
+                    $color = trim($parts[4]);
+                }
+                if (empty($join_piece) && isset($parts[5]) && !empty(trim($parts[5]))) {
+                    $join_piece = trim($parts[5]);
                 }
             }
 
-            if (!$gudangJadi) {
-                $insItem = DB::table('inspecting_item')
-                    ->where('qr_code', $searchQr)
-                    ->orWhere('qr_code', $db_qr_code)
-                    ->first();
-                if ($insItem) {
-                    $gudangJadi = (object)[
-                        'id'           => null,
-                        'qr_code_desc' => $insItem->qr_code_desc ?? $insItem->qr_code ?? $qr_code,
-                        'qty'          => $insItem->qty ?? 0,
-                        'unit'         => 'YARDS',
-                        'grade'        => $insItem->grade ?? 1,
-                    ];
-                }
-            }
-
-            // =========================================================================
-            // 🛑 VALIDASI: Tolak jika data tidak ditemukan di Stok maupun Inspecting
-            // =========================================================================
-            if (!$gudangJadi) {
-                DB::rollBack();
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Barcode (' . $db_qr_code . ') tidak ditemukan di Stok Gudang Jadi maupun di Inspecting!',
-                    'data'    => null,
-                ], 200);
-            }
-
+            // Mapping Grade
             $letterToGrade = [
                 'A' => 1, 'B' => 2, 'C' => 3, 'D' => 4, 'E' => 5,
                 '1' => 1, '2' => 2, '3' => 3, '4' => 4, '5' => 5,
             ];
-
-            if ($gudangJadi) {
-                if (empty($qr_code_desc) && isset($gudangJadi->qr_code_desc)) {
-                    $qr_code_desc = $gudangJadi->qr_code_desc;
-                }
-                if ((empty($qty) || $qty == 0) && isset($gudangJadi->qty)) {
-                    $qty = $gudangJadi->qty;
-                }
-                if (empty($unit) && isset($gudangJadi->unit)) {
-                    $unit = $gudangJadi->unit;
-                }
-                if (isset($gudangJadi->grade)) {
-                    $grade = $gudangJadi->grade;
-                }
-            }
-
-            // Convert request grade to SmallInt for PostgreSQL
             $upperGrade = strtoupper(trim((string)$grade));
             $db_grade = isset($letterToGrade[$upperGrade]) ? $letterToGrade[$upperGrade] : (is_numeric($grade) ? (int)$grade : 1);
 
-            // Fallback parsing QTY & Unit dari teks QR Code (misal: "10YDS/9.1M") jika QTY masih 0
+            // Parsing QTY & Unit dari teks jika kosong
             if (empty($qty) || $qty == 0) {
                 if (preg_match('/(\d+(?:\.\d+)?)\s*(YDS|YARD|YARDS|METER|M)/i', $qr_code, $qtyMatches)) {
                     $qty = (float)$qtyMatches[1];
@@ -349,6 +251,10 @@ class OpnamePcsController extends Controller
                 }
             }
 
+            if (empty($unit)) {
+                $unit = ($ins_type === 'INS2' || $ins_type === 'MKL') ? 'METER' : 'YARDS';
+            }
+
             if (empty($qr_code_desc)) {
                 $qr_code_desc = $qr_code;
             }
@@ -358,7 +264,6 @@ class OpnamePcsController extends Controller
             }
 
             $now = time();
-            $id_trn_gudang_jadi = ($gudangJadi && !empty($gudangJadi->id)) ? $gudangJadi->id : null;
 
             // Jika opname_code kosong, generate otomatis
             if (empty($opname_code)) {
@@ -374,36 +279,24 @@ class OpnamePcsController extends Controller
                 $opname_code = sprintf('OPN-PCS-%03d', $nextNum);
             }
 
-            // =========================================================================
-            // 🚀 AUTO CREATE STOCK GUDANG JADI AGAR WO/SC/BUYER LANGSUNG TERHUBUNG
-            // =========================================================================
+            // AUTO-CREATE TRN_GUDANG_JADI jika belum ada id_trn_gudang_jadi
             if (!$id_trn_gudang_jadi) {
                 $wo_id = null;
-                $color = '-';
-                $source = ($ins_type === 'INS2' || $ins_type === 'MKL') ? 3 : 1;
-                $transFrom = !empty($ins_type) ? $ins_type : 'INS';
 
-                // 1. Ekstrak No WO & Warna dari teks barcode (parts[1] = No WO, parts[4] = Warna)
-                if (!empty($qr_code_desc) && strpos($qr_code_desc, '!') !== false) {
-                    $parts = explode('!', $qr_code_desc);
-                    if (isset($parts[1]) && !empty(trim($parts[1]))) {
-                        $wo_no = trim($parts[1]);
-                        $wo = DB::table('trn_wo')->where('wo_no', $wo_no)->first();
-                        if ($wo) {
-                            $wo_id = $wo->id;
-                        }
-                    }
-                    if (isset($parts[4]) && !empty(trim($parts[4]))) {
-                        $color = trim($parts[4]);
+                // Cari WO ID dari nomor WO
+                if (!empty($wo_no)) {
+                    $wo = DB::table('trn_wo')->where('no', $wo_no)->first();
+                    if ($wo) {
+                        $wo_id = $wo->id;
                     }
                 }
 
-                // 2. Fallback cari WO dari header inspecting jika belum dapat dari teks
+                // Fallback cari WO dari Inspecting
                 if (!$wo_id && $ins_item_id > 0) {
                     if ($ins_type === 'INS2' || $ins_type === 'MKL') {
                         $insItemObj = DB::table('inspecting_mkl_bj_items')->where('id', $ins_item_id)->first();
-                        if ($insItemObj && isset($insItemObj->inspecting_mkl_bj_id)) {
-                            $insHeader = DB::table('inspecting_mkl_bj')->where('id', $insItemObj->inspecting_mkl_bj_id)->first();
+                        if ($insItemObj && isset($insItemObj->inspecting_id)) {
+                            $insHeader = DB::table('inspecting_mkl_bj')->where('id', $insItemObj->inspecting_id)->first();
                             if ($insHeader) {
                                 $wo_id = $insHeader->wo_id ?? null;
                             }
@@ -419,9 +312,11 @@ class OpnamePcsController extends Controller
                     }
                 }
 
-                // Jika WO berhasil ditemukan, langsung buat record resmi di trn_gudang_jadi
+                // Jika WO ditemukan, buat master stok di trn_gudang_jadi
                 if ($wo_id) {
+                    $source = ($ins_type === 'INS2' || $ins_type === 'MKL') ? 3 : 1;
                     $unitInt = (strtoupper(trim((string)$unit)) === 'METER' || strtoupper(trim((string)$unit)) === 'MTR' || $unit == 2) ? 2 : 1;
+
                     $id_trn_gudang_jadi = DB::table('trn_gudang_jadi')->insertGetId([
                         'jenis_gudang' => ($db_grade == 2) ? 2 : 1,
                         'wo_id'        => $wo_id,
@@ -435,10 +330,6 @@ class OpnamePcsController extends Controller
                         'color'        => mb_substr($color, 0, 255),
                         'grade'        => $db_grade,
                         'locs_code'    => mb_substr($locs_code, 0, 25),
-                        'trans_from'   => $transFrom,
-                        'id_from'      => $ins_item_id > 0 ? $ins_item_id : null,
-                        'qr_code'      => $searchQr,
-                        'qr_code_desc' => mb_substr($qr_code_desc, 0, 255),
                         'created_at'   => $now,
                         'created_by'   => $created_by ?: 1,
                         'updated_at'   => $now,
@@ -447,21 +338,12 @@ class OpnamePcsController extends Controller
                 }
             }
 
-            // =========================================================================
-            // 🛑 VALIDASI DUPLIKAT DI SINI: Cek qr_code atau id_trn_gudang_jadi di DB
-            // =========================================================================
-            $existingQuery = DB::table('trn_gudang_jadi_opname_pcs')
-                ->where(function($q) use ($db_qr_code, $id_trn_gudang_jadi) {
-                    $q->where('qr_code', $db_qr_code);
-                    if ($id_trn_gudang_jadi) {
-                        $q->orWhere('id_trn_gudang_jadi', $id_trn_gudang_jadi);
-                    }
-                });
-
-            $existing = $existingQuery->first();
+            // VALIDASI DUPLIKAT: Cek qr_code pada tabel opname pcs
+            $existing = DB::table('trn_gudang_jadi_opname_pcs')
+                ->where('qr_code', $db_qr_code)
+                ->first();
 
             if ($existing) {
-                // Ambil & format tanggal opname dari created_at
                 $opnamedDate = '';
                 if (!empty($existing->created_at)) {
                     if (is_numeric($existing->created_at)) {
@@ -476,8 +358,8 @@ class OpnamePcsController extends Controller
                 }
 
                 $dateMsg = !empty($opnamedDate) ? " pada tanggal " . $opnamedDate : "";
-
                 DB::rollBack();
+
                 return response()->json([
                     'success'      => false,
                     'message'      => 'Stock (' . $db_qr_code . ') ini sudah pernah di-opname' . $dateMsg . '!',
@@ -486,13 +368,13 @@ class OpnamePcsController extends Controller
                 ], 200);
             }
 
-            // Insert data baru ke trn_gudang_jadi_opname_pcs
+            // Insert ke tabel trn_gudang_jadi_opname_pcs
             $id = DB::table('trn_gudang_jadi_opname_pcs')->insertGetId([
                 'id_trn_gudang_jadi' => $id_trn_gudang_jadi,
                 'opname_code'        => $opname_code,
                 'qr_code'            => $db_qr_code,
                 'qr_code_desc'       => $qr_code_desc,
-                'qty'                => $qty,
+                'qty'                => (float)$qty,
                 'unit'               => $unit,
                 'grade'              => $db_grade,
                 'join_piece'         => $join_piece,
@@ -505,7 +387,7 @@ class OpnamePcsController extends Controller
                 'updated_by'         => $created_by,
             ]);
 
-            // Update lokasi barang pada tabel trn_gudang_jadi (jika sudah ada stoknya)
+            // Update lokasi pada master gudang jadi jika ada relasinya
             if ($id_trn_gudang_jadi) {
                 DB::table('trn_gudang_jadi')
                     ->where('id', $id_trn_gudang_jadi)
@@ -559,7 +441,7 @@ class OpnamePcsController extends Controller
             $remark       = $request->json()->get('remark');
             $updated_by   = $request->json()->get('updated_by');
             if (!is_numeric($updated_by)) {
-                $updated_by = null;
+                $updated_by = 1;
             }
 
             if (!$id) {
@@ -587,7 +469,7 @@ class OpnamePcsController extends Controller
                 'updated_by' => $updated_by,
             ];
 
-            if ($qty !== null) $updateData['qty'] = $qty;
+            if ($qty !== null) $updateData['qty'] = (float)$qty;
             if ($unit !== null) $updateData['unit'] = $unit;
             if ($grade !== null) {
                 $letterToGrade = [
@@ -606,17 +488,15 @@ class OpnamePcsController extends Controller
                 ->where('id', $id)
                 ->update($updateData);
 
-            // Jika lokasi diubah, update juga ke trn_gudang_jadi
-            if (!empty($locs_code)) {
-                if (!empty($opnamePcs->id_trn_gudang_jadi)) {
-                    DB::table('trn_gudang_jadi')
-                        ->where('id', $opnamePcs->id_trn_gudang_jadi)
-                        ->update(['locs_code' => $locs_code, 'updated_at' => $now, 'updated_by' => $updated_by]);
-                } else if (!empty($opnamePcs->qr_code)) {
-                    DB::table('trn_gudang_jadi')
-                        ->where('qr_code', $opnamePcs->qr_code)
-                        ->update(['locs_code' => $locs_code, 'updated_at' => $now, 'updated_by' => $updated_by]);
-                }
+            // Jika lokasi diubah, update juga ke master trn_gudang_jadi
+            if (!empty($locs_code) && !empty($opnamePcs->id_trn_gudang_jadi)) {
+                DB::table('trn_gudang_jadi')
+                    ->where('id', $opnamePcs->id_trn_gudang_jadi)
+                    ->update([
+                        'locs_code'  => $locs_code,
+                        'updated_at' => $now,
+                        'updated_by' => $updated_by
+                    ]);
             }
 
             DB::commit();
@@ -657,16 +537,8 @@ class OpnamePcsController extends Controller
                 ], 200);
             }
 
-            $deleted = DB::table('trn_gudang_jadi_opname_pcs')->where('id', $id)->delete();
-
-            if ($deleted) {
-                DB::commit();
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Berhasil menghapus data opname pcs!',
-                    'data'    => null,
-                ], 200);
-            } else {
+            $opnamePcs = DB::table('trn_gudang_jadi_opname_pcs')->where('id', $id)->first();
+            if (!$opnamePcs) {
                 DB::rollBack();
                 return response()->json([
                     'success' => false,
@@ -675,48 +547,23 @@ class OpnamePcsController extends Controller
                 ], 200);
             }
 
+            DB::table('trn_gudang_jadi_opname_pcs')->where('id', $id)->delete();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Berhasil menghapus data opname pcs!',
+                'data'    => null,
+            ], 200);
+
         } catch (\Throwable $th) {
             DB::rollBack();
             Log::error('OpnamePcsController Delete Error: ' . $th->getMessage() . "\n" . $th->getTraceAsString());
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal menghapus opname pcs: ' . $th->getMessage(),
+                'message' => 'Gagal menghapus data opname pcs: ' . $th->getMessage(),
                 'data'    => null,
-            ], 200);
-        }
-    }
-
-    /**
-     * Get next auto-increment opname_code (e.g. OPN-PCS-001, OPN-PCS-002, ...)
-     */
-    public function GetNextOpnameCode(Request $request)
-    {
-        try {
-            $latest = DB::table('trn_gudang_jadi_opname_pcs')
-                ->where('opname_code', 'ILIKE', 'OPN-PCS-%')
-                ->orderBy('id', 'desc')
-                ->value('opname_code');
-
-            $nextNumber = 1;
-            if ($latest && preg_match('/OPN-PCS-(\d+)/i', $latest, $m)) {
-                $nextNumber = ((int)$m[1]) + 1;
-            }
-            $nextCode = sprintf("OPN-PCS-%03d", $nextNumber);
-
-            Log::info("GetNextOpnameCode: latest=$latest, nextCode=$nextCode");
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Berhasil mengambil kode opname berikutnya!',
-                'data'    => $nextCode,
-            ], 200);
-
-        } catch (\Throwable $th) {
-            Log::error("GetNextOpnameCode Error: " . $th->getMessage() . "\n" . $th->getTraceAsString());
-            return response()->json([
-                'success' => true,
-                'message' => 'Default kode opname',
-                'data'    => 'OPN-PCS-001',
             ], 200);
         }
     }
