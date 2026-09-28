@@ -20,7 +20,9 @@ class MoveLocController extends Controller
 
             DB::beginTransaction();
             $move_date=$request->json()->get('move_date');
-            $move_count=$request->json()->get('move_count');
+            $raw_move_count = $request->json()->get('move_count');
+            $move_count = str_replace(',', '.', (string)$raw_move_count);
+            $move_count = is_numeric($move_count) ? (float)$move_count : 0;
             $move_locs_code_from=$request->json()->get('move_locs_code_from');
             $move_locs_code_to=$request->json()->get('move_locs_code_to');
             $move_create_by=$request->json()->get('move_create_by');

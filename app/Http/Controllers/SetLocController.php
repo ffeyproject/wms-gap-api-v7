@@ -20,7 +20,9 @@ class SetLocController extends Controller
 
             DB::beginTransaction();
             $set_date=$request->json()->get('set_date');
-            $set_count=$request->json()->get('set_count');
+            $raw_set_count = $request->json()->get('set_count');
+            $set_count = str_replace(',', '.', (string)$raw_set_count);
+            $set_count = is_numeric($set_count) ? (float)$set_count : 0;
             $set_locs_code=$request->json()->get('set_locs_code');
             $set_create_by=$request->json()->get('set_create_by');
             $details = $request->json()->get('details');
