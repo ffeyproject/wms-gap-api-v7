@@ -216,9 +216,10 @@ class OpnamePcsController extends Controller
 
             // Ekstrak info dari barcode jika format teks pemisah '!'
             $wo_no = null;
-            $color = '-';
-            if (strpos($qr_code, '!') !== false) {
-                $parts = explode('!', $qr_code);
+            $color = null;
+            $sourceStr = !empty($qr_code_desc) ? $qr_code_desc : $qr_code;
+            if (strpos($sourceStr, '!') !== false) {
+                $parts = explode('!', $sourceStr);
                 if (isset($parts[1]) && !empty(trim($parts[1]))) {
                     $wo_no = trim($parts[1]);
                 }
@@ -240,7 +241,7 @@ class OpnamePcsController extends Controller
 
             // Parsing QTY & Unit dari teks jika kosong
             if (empty($qty) || $qty == 0) {
-                if (preg_match('/(\d+(?:\.\d+)?)\s*(YDS|YARD|YARDS|METER|M)/i', $qr_code, $qtyMatches)) {
+                if (preg_match('/(\d+(?:\.\d+)?)\s*(YDS|YARD|YARDS|METER|M)/i', $sourceStr, $qtyMatches)) {
                     $qty = (float)$qtyMatches[1];
                     $parsedUnit = strtoupper($qtyMatches[2]);
                     if (in_array($parsedUnit, ['YARD', 'YDS', 'YARDS'])) {
@@ -291,25 +292,54 @@ class OpnamePcsController extends Controller
                     }
                 }
 
-                // Fallback cari WO dari Inspecting
-                if (!$wo_id && $ins_item_id > 0) {
+                // Fallback cari WO & Warna dari Inspecting
+                if ($ins_item_id > 0) {
                     if ($ins_type === 'INS2' || $ins_type === 'MKL') {
-                        $insItemObj = DB::table('inspecting_mkl_bj_items')->where('id', $ins_item_id)->first();
-                        if ($insItemObj && isset($insItemObj->inspecting_id)) {
-                            $insHeader = DB::table('inspecting_mkl_bj')->where('id', $insItemObj->inspecting_id)->first();
-                            if ($insHeader) {
-                                $wo_id = $insHeader->wo_id ?? null;
+                        $insData = DB::table('inspecting_mkl_bj_items as a')
+                            ->join('inspecting_mkl_bj as b', 'a.inspecting_id', '=', 'b.id')
+                            ->leftJoin('trn_wo_color as c', 'b.wo_color_id', '=', 'c.id')
+                            ->leftJoin('trn_mo_color as d', 'c.mo_color_id', '=', 'd.id')
+                            ->where('a.id', $ins_item_id)
+                            ->select('b.wo_id', 'd.color as color_name')
+                            ->first();
+
+                        if ($insData) {
+                            if (!$wo_id) $wo_id = $insData->wo_id ?? null;
+                            if (empty($color) && !empty($insData->color_name)) {
+                                $color = $insData->color_name;
                             }
                         }
                     } else {
-                        $insItemObj = DB::table('inspecting_item')->where('id', $ins_item_id)->first();
-                        if ($insItemObj && isset($insItemObj->inspecting_id)) {
-                            $insHeader = DB::table('inspecting')->where('id', $insItemObj->inspecting_id)->first();
-                            if ($insHeader) {
-                                $wo_id = $insHeader->wo_id ?? null;
+                        $insData = DB::table('inspecting_item as a')
+                            ->join('inspecting as b', 'a.inspecting_id', '=', 'b.id')
+                            ->leftJoin('trn_wo_color as c', 'b.wo_color_id', '=', 'c.id')
+                            ->leftJoin('trn_mo_color as d', 'c.mo_color_id', '=', 'd.id')
+                            ->where('a.id', $ins_item_id)
+                            ->select('b.wo_id', DB::raw("COALESCE(b.kombinasi, d.color) as color_name"))
+                            ->first();
+
+                        if ($insData) {
+                            if (!$wo_id) $wo_id = $insData->wo_id ?? null;
+                            if (empty($color) && !empty($insData->color_name)) {
+                                $color = $insData->color_name;
                             }
                         }
                     }
+                }
+
+                // Fallback cari warna dari WO jika masih kosong
+                if (empty($color) && $wo_id) {
+                    $woColor = DB::table('trn_wo_color as a')
+                        ->join('trn_mo_color as b', 'a.mo_color_id', '=', 'b.id')
+                        ->where('a.wo_id', $wo_id)
+                        ->value('b.color');
+                    if (!empty($woColor)) {
+                        $color = $woColor;
+                    }
+                }
+
+                if (empty($color)) {
+                    $color = '-';
                 }
 
                 // Jika WO ditemukan, buat master stok di trn_gudang_jadi
@@ -387,15 +417,19 @@ class OpnamePcsController extends Controller
                 'updated_by'         => $created_by,
             ]);
 
-            // Update lokasi pada master gudang jadi jika ada relasinya
+            // Update lokasi & warna pada master gudang jadi jika ada relasinya
             if ($id_trn_gudang_jadi) {
+                $updateGj = [
+                    'locs_code'  => $locs_code,
+                    'updated_at' => $now,
+                    'updated_by' => $created_by
+                ];
+                if (!empty($color) && $color !== '-') {
+                    $updateGj['color'] = mb_substr($color, 0, 255);
+                }
                 DB::table('trn_gudang_jadi')
                     ->where('id', $id_trn_gudang_jadi)
-                    ->update([
-                        'locs_code'  => $locs_code,
-                        'updated_at' => $now,
-                        'updated_by' => $created_by
-                    ]);
+                    ->update($updateGj);
             }
 
             DB::commit();
