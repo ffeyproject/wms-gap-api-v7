@@ -10,6 +10,34 @@ use Carbon\Carbon;
 class OpnamePcsController extends Controller
 {
     /**
+     * Ekstrak nama warna dari string No. Lot jika warna diisi di lot (contoh: ET 04 / COKLAT TUA -> COKLAT TUA)
+     */
+    public static function extractColorFromLot($lot)
+    {
+        if (empty($lot) || trim($lot) === '-') {
+            return null;
+        }
+        $lot = trim($lot);
+
+        if (strpos($lot, '/') !== false) {
+            $parts = array_map('trim', explode('/', $lot));
+            for ($i = count($parts) - 1; $i >= 0; $i--) {
+                $p = $parts[$i];
+                $cleanP = trim(preg_replace('/^\d+\s*[\/-]?\s*/', '', $p));
+                if (preg_match('/[a-zA-Z]{3,}/', $cleanP)) {
+                    return $cleanP;
+                }
+            }
+            $last = end($parts);
+            if (!empty($last)) {
+                return $last;
+            }
+        }
+
+        return $lot;
+    }
+
+    /**
      * Get list data opname pcs (Hanya mengambil data jika rak dipilih)
      */
     public function GetList(Request $request)
@@ -300,13 +328,16 @@ class OpnamePcsController extends Controller
                             ->leftJoin('trn_wo_color as c', 'b.wo_color_id', '=', 'c.id')
                             ->leftJoin('trn_mo_color as d', 'c.mo_color_id', '=', 'd.id')
                             ->where('a.id', $ins_item_id)
-                            ->select('b.wo_id', 'd.color as color_name')
+                            ->select('b.wo_id', 'b.no_lot', 'd.color as color_name')
                             ->first();
 
                         if ($insData) {
                             if (!$wo_id) $wo_id = $insData->wo_id ?? null;
-                            if (empty($color) && !empty($insData->color_name)) {
+                            if ((empty($color) || $color === '-') && !empty($insData->color_name)) {
                                 $color = $insData->color_name;
+                            }
+                            if ((empty($color) || $color === '-') && !empty($insData->no_lot)) {
+                                $color = self::extractColorFromLot($insData->no_lot);
                             }
                         }
                     } else {
@@ -315,13 +346,16 @@ class OpnamePcsController extends Controller
                             ->leftJoin('trn_wo_color as c', 'b.wo_color_id', '=', 'c.id')
                             ->leftJoin('trn_mo_color as d', 'c.mo_color_id', '=', 'd.id')
                             ->where('a.id', $ins_item_id)
-                            ->select('b.wo_id', DB::raw("COALESCE(b.kombinasi, d.color) as color_name"))
+                            ->select('b.wo_id', 'b.no_lot', DB::raw("COALESCE(b.kombinasi, d.color) as color_name"))
                             ->first();
 
                         if ($insData) {
                             if (!$wo_id) $wo_id = $insData->wo_id ?? null;
-                            if (empty($color) && !empty($insData->color_name)) {
+                            if ((empty($color) || $color === '-') && !empty($insData->color_name)) {
                                 $color = $insData->color_name;
+                            }
+                            if ((empty($color) || $color === '-') && !empty($insData->no_lot)) {
+                                $color = self::extractColorFromLot($insData->no_lot);
                             }
                         }
                     }
@@ -602,3 +636,4 @@ class OpnamePcsController extends Controller
         }
     }
 }
+
