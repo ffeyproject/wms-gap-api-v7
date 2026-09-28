@@ -311,7 +311,135 @@ class OpnamePcsController extends Controller
                 ], 200);
             }
 
+            if ($gudangJadi) {
+                if (empty($qr_code_desc) && isset($gudangJadi->qr_code_desc)) {
+                    $qr_code_desc = $gudangJadi->qr_code_desc;
+                }
+                if ((empty($qty) || $qty == 0) && isset($gudangJadi->qty)) {
+                    $qty = $gudangJadi->qty;
+                }
+                if (empty($unit) && isset($gudangJadi->unit)) {
+                    $unit = $gudangJadi->unit;
+                }
+                if (isset($gudangJadi->grade)) {
+                    $grade = $gudangJadi->grade;
+                }
+            }
+
+            $letterToGrade = [
+                'A' => 1, 'B' => 2, 'C' => 3, 'D' => 4, 'E' => 5,
+                '1' => 1, '2' => 2, '3' => 3, '4' => 4, '5' => 5,
+            ];
+
+            // Convert request grade to SmallInt for PostgreSQL
+            $upperGrade = strtoupper(trim((string)$grade));
+            $db_grade = isset($letterToGrade[$upperGrade]) ? $letterToGrade[$upperGrade] : (is_numeric($grade) ? (int)$grade : 1);
+
+            // Fallback parsing QTY & Unit dari teks QR Code (misal: "10YDS/9.1M") jika QTY masih 0
+            if (empty($qty) || $qty == 0) {
+                if (preg_match('/(\d+(?:\.\d+)?)\s*(YDS|YARD|YARDS|METER|M)/i', $qr_code, $qtyMatches)) {
+                    $qty = (float)$qtyMatches[1];
+                    $parsedUnit = strtoupper($qtyMatches[2]);
+                    if (in_array($parsedUnit, ['YARD', 'YDS', 'YARDS'])) {
+                        $unit = 'YARDS';
+                    } else if (in_array($parsedUnit, ['M', 'METER'])) {
+                        $unit = 'METER';
+                    }
+                }
+            }
+
+            if (empty($qr_code_desc)) {
+                $qr_code_desc = $qr_code;
+            }
+
+            if (empty($qty)) {
+                $qty = 0;
+            }
+
+            $now = time();
             $id_trn_gudang_jadi = ($gudangJadi && !empty($gudangJadi->id)) ? $gudangJadi->id : null;
+
+            // =========================================================================
+            // 🚀 FITUR BARU: AUTO CREATE STOCK GUDANG JADI JIKA BELUM ADA DI TABEL STOK
+            // =========================================================================
+            if (!$id_trn_gudang_jadi) {
+                $wo_id = null;
+                $sc_id = null;
+                $sc_greige_id = null;
+                $mo_id = null;
+                $source = ($ins_type === 'INS2' || $ins_type === 'MKL') ? 3 : 1;
+
+                // 1. Ekstrak No WO dari teks barcode (parts[1]) contoh: 26-D-002705
+                $wo_no = null;
+                if (!empty($qr_code_desc) && strpos($qr_code_desc, '!') !== false) {
+                    $parts = explode('!', $qr_code_desc);
+                    if (isset($parts[1]) && !empty(trim($parts[1]))) {
+                        $wo_no = trim($parts[1]);
+                    }
+                }
+
+                if ($wo_no) {
+                    $wo = DB::table('trn_wo')
+                        ->where('wo_no', $wo_no)
+                        ->orWhere('wo_no', 'ILIKE', '%' . $wo_no . '%')
+                        ->first();
+                    if ($wo) {
+                        $wo_id = $wo->id ?? null;
+                        $sc_id = $wo->sc_id ?? null;
+                        $sc_greige_id = $wo->sc_greige_id ?? null;
+                        $mo_id = $wo->mo_id ?? null;
+                    }
+                }
+
+                // 2. Fallback: Cari WO dari header inspecting jika belum ditemukan
+                if (!$wo_id && $ins_item_id > 0) {
+                    if ($ins_type === 'INS2' || $ins_type === 'MKL') {
+                        $insItemObj = DB::table('inspecting_mkl_bj_items')->where('id', $ins_item_id)->first();
+                        if ($insItemObj && isset($insItemObj->inspecting_mkl_bj_id)) {
+                            $insHeader = DB::table('inspecting_mkl_bj')->where('id', $insItemObj->inspecting_mkl_bj_id)->first();
+                            if ($insHeader) {
+                                $wo_id = $insHeader->wo_id ?? $insHeader->trn_wo_id ?? null;
+                                $sc_id = $insHeader->sc_id ?? $insHeader->trn_sc_id ?? null;
+                            }
+                        }
+                    } else {
+                        $insItemObj = DB::table('inspecting_item')->where('id', $ins_item_id)->first();
+                        if ($insItemObj && isset($insItemObj->inspecting_id)) {
+                            $insHeader = DB::table('inspecting')->where('id', $insItemObj->inspecting_id)->first();
+                            if ($insHeader) {
+                                $wo_id = $insHeader->wo_id ?? $insHeader->trn_wo_id ?? null;
+                                $sc_id = $insHeader->sc_id ?? $insHeader->trn_sc_id ?? null;
+                            }
+                        }
+                    }
+                }
+
+                // Masukkan langsung ke trn_gudang_jadi
+                $unitInt = (strtoupper(trim((string)$unit)) === 'METER' || strtoupper(trim((string)$unit)) === 'MTR' || $unit == 2) ? 2 : 1;
+                $newGudangJadiId = DB::table('trn_gudang_jadi')->insertGetId([
+                    'id_from'       => $ins_item_id > 0 ? $ins_item_id : null,
+                    'source_ref'    => $ins_item_id > 0 ? (string)$ins_item_id : null,
+                    'source'        => $source,
+                    'qr_code'       => $db_qr_code,
+                    'qr_code_desc'  => $qr_code_desc,
+                    'qty'           => $qty,
+                    'unit'          => $unitInt,
+                    'grade'         => $db_grade,
+                    'join_piece'    => $join_piece ?? '-',
+                    'locs_code'     => $locs_code,
+                    'status'        => 1, // 1 = Stock
+                    'wo_id'         => $wo_id,
+                    'sc_id'         => $sc_id,
+                    'sc_greige_id'  => $sc_greige_id,
+                    'mo_id'         => $mo_id,
+                    'created_at'    => $now,
+                    'created_by'    => $created_by,
+                    'updated_at'    => $now,
+                    'updated_by'    => $created_by,
+                ]);
+
+                $id_trn_gudang_jadi = $newGudangJadiId;
+            }
 
             // =========================================================================
             // 🛑 VALIDASI DUPLIKAT DI SINI: Cek qr_code atau id_trn_gudang_jadi di DB
@@ -365,53 +493,6 @@ class OpnamePcsController extends Controller
                 }
                 $opname_code = sprintf('OPN-PCS-%03d', $nextNum);
             }
-            
-            $letterToGrade = [
-                'A' => 1, 'B' => 2, 'C' => 3, 'D' => 4, 'E' => 5,
-                '1' => 1, '2' => 2, '3' => 3, '4' => 4, '5' => 5,
-            ];
-
-            if ($gudangJadi) {
-                if (empty($qr_code_desc) && isset($gudangJadi->qr_code_desc)) {
-                    $qr_code_desc = $gudangJadi->qr_code_desc;
-                }
-                if ((empty($qty) || $qty == 0) && isset($gudangJadi->qty)) {
-                    $qty = $gudangJadi->qty;
-                }
-                if (empty($unit) && isset($gudangJadi->unit)) {
-                    $unit = $gudangJadi->unit;
-                }
-                if (isset($gudangJadi->grade)) {
-                    $grade = $gudangJadi->grade;
-                }
-            }
-
-            // Convert request grade to SmallInt for PostgreSQL
-            $upperGrade = strtoupper(trim((string)$grade));
-            $db_grade = isset($letterToGrade[$upperGrade]) ? $letterToGrade[$upperGrade] : (is_numeric($grade) ? (int)$grade : 1);
-
-            // Fallback parsing QTY & Unit dari teks QR Code (misal: "10YDS/9.1M") jika QTY masih 0
-            if (empty($qty) || $qty == 0) {
-                if (preg_match('/(\d+(?:\.\d+)?)\s*(YDS|YARD|YARDS|METER|M)/i', $qr_code, $qtyMatches)) {
-                    $qty = (float)$qtyMatches[1];
-                    $parsedUnit = strtoupper($qtyMatches[2]);
-                    if (in_array($parsedUnit, ['YARD', 'YDS', 'YARDS'])) {
-                        $unit = 'YARDS';
-                    } else if (in_array($parsedUnit, ['M', 'METER'])) {
-                        $unit = 'METER';
-                    }
-                }
-            }
-
-            if (empty($qr_code_desc)) {
-                $qr_code_desc = $qr_code;
-            }
-
-            if (empty($qty)) {
-                $qty = 0;
-            }
-
-            $now = time();
 
             // Insert data baru ke trn_gudang_jadi_opname_pcs
             $id = DB::table('trn_gudang_jadi_opname_pcs')->insertGetId([
@@ -432,28 +513,10 @@ class OpnamePcsController extends Controller
                 'updated_by'         => $created_by,
             ]);
 
-            // =========================================================================
-            // FITUR: UPDATE LOKASI BARANG PADA TABEL TRN_GUDANG_JADI (JIKA ADA DI STOK)
-            // =========================================================================
+            // Update lokasi barang pada tabel trn_gudang_jadi
             if ($id_trn_gudang_jadi) {
                 DB::table('trn_gudang_jadi')
                     ->where('id', $id_trn_gudang_jadi)
-                    ->update([
-                        'locs_code'  => $locs_code,
-                        'updated_at' => $now,
-                        'updated_by' => $created_by
-                    ]);
-            } else if (!empty($cleanQrCode)) {
-                DB::table('trn_gudang_jadi')
-                    ->where('qr_code', $cleanQrCode)
-                    ->update([
-                        'locs_code'  => $locs_code,
-                        'updated_at' => $now,
-                        'updated_by' => $created_by
-                    ]);
-            } else {
-                DB::table('trn_gudang_jadi')
-                    ->where('qr_code', $db_qr_code)
                     ->update([
                         'locs_code'  => $locs_code,
                         'updated_at' => $now,
@@ -579,7 +642,7 @@ class OpnamePcsController extends Controller
                 'success' => false,
                 'message' => 'Gagal memperbarui opname pcs: ' . $th->getMessage(),
                 'data'    => null,
-                ], 200);
+            ], 200);
         }
     }
 
