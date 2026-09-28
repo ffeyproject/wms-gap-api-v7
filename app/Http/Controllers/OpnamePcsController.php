@@ -94,8 +94,6 @@ class OpnamePcsController extends Controller
         }
     }
 
-
-
     /**
      * Get detail data opname pcs berdasarkan ID
      */
@@ -201,60 +199,75 @@ class OpnamePcsController extends Controller
                 $cleanQrCode = $cleanMatches[1];
             }
 
-            // Ultra-fast indexed lookup for trn_gudang_jadi
+            $searchQr = !empty($cleanQrCode) ? $cleanQrCode : $db_qr_code;
             $gudangJadi = null;
 
-            if ($stock_id > 0) {
+            // 1. PRIORITAS UTAMA: Cari langsung berdasarkan EXACT qr_code di trn_gudang_jadi
+            $gudangJadi = DB::table('trn_gudang_jadi')
+                ->where('qr_code', $searchQr)
+                ->orWhere('qr_code', $db_qr_code)
+                ->first();
+
+            // 2. Jika ada stock_id (STK-xxx)
+            if (!$gudangJadi && $stock_id > 0) {
                 $gudangJadi = DB::table('trn_gudang_jadi')->where('id', $stock_id)->first();
             }
 
-            if (!$gudangJadi && $ins_item_id > 0) {
-                $gudangJadi = DB::table('trn_gudang_jadi')
-                    ->where(function($q) use ($ins_item_id) {
-                        $q->where('id_from', $ins_item_id)
-                          ->orWhere('source_ref', (string)$ins_item_id);
-                    })
-                    ->first();
-            }
-
-            if (!$gudangJadi && !empty($cleanQrCode)) {
-                $gudangJadi = DB::table('trn_gudang_jadi')->where('qr_code', $cleanQrCode)->first();
-            }
-
-            if (!$gudangJadi) {
-                $gudangJadi = DB::table('trn_gudang_jadi')->where('qr_code', $db_qr_code)->first();
-            }
-
-            // Fallback for INS / INS2 / MKL scanning if not present in trn_gudang_jadi
+            // 3. Fallback: Cari ke tabel Inspecting yang sesuai jika belum ada di trn_gudang_jadi
             if (!$gudangJadi && $ins_item_id > 0) {
                 if ($ins_type === 'INS2' || $ins_type === 'MKL') {
-                    $insItem = DB::table('inspecting_mkl_bj_items')->where('id', $ins_item_id)->first();
+                    // Cari di inspecting_mkl_bj_items
+                    $insItem = DB::table('inspecting_mkl_bj_items')
+                        ->where('id', $ins_item_id)
+                        ->orWhere('qr_code', $searchQr)
+                        ->first();
+
                     if ($insItem) {
-                        $gudangJadi = (object)[
-                            'id'           => null,
-                            'qr_code_desc' => $insItem->qr_code_desc ?? $insItem->qr_code ?? $qr_code,
-                            'qty'          => $insItem->qty ?? 0,
-                            'unit'         => 'METER',
-                            'grade'        => $insItem->grade ?? 1,
-                        ];
+                        $stokMkl = DB::table('trn_gudang_jadi')
+                            ->where('qr_code', $insItem->qr_code ?? $searchQr)
+                            ->first();
+
+                        if ($stokMkl) {
+                            $gudangJadi = $stokMkl;
+                        } else {
+                            $gudangJadi = (object)[
+                                'id'           => null,
+                                'qr_code_desc' => $insItem->qr_code_desc ?? $insItem->qr_code ?? $qr_code,
+                                'qty'          => $insItem->qty ?? 0,
+                                'unit'         => 'METER',
+                                'grade'        => $insItem->grade ?? 1,
+                            ];
+                        }
                     }
                 } else {
-                    $insItem = DB::table('inspecting_item')->where('id', $ins_item_id)->first();
+                    // Cari di inspecting_item
+                    $insItem = DB::table('inspecting_item')
+                        ->where('id', $ins_item_id)
+                        ->orWhere('qr_code', $searchQr)
+                        ->first();
+
                     if ($insItem) {
-                        $gudangJadi = (object)[
-                            'id'           => null,
-                            'qr_code_desc' => $insItem->qr_code_desc ?? $insItem->qr_code ?? $qr_code,
-                            'qty'          => $insItem->qty ?? 0,
-                            'unit'         => 'YARDS',
-                            'grade'        => $insItem->grade ?? 1,
-                        ];
+                        $stokIns = DB::table('trn_gudang_jadi')
+                            ->where('qr_code', $insItem->qr_code ?? $searchQr)
+                            ->first();
+
+                        if ($stokIns) {
+                            $gudangJadi = $stokIns;
+                        } else {
+                            $gudangJadi = (object)[
+                                'id'           => null,
+                                'qr_code_desc' => $insItem->qr_code_desc ?? $insItem->qr_code ?? $qr_code,
+                                'qty'          => $insItem->qty ?? 0,
+                                'unit'         => 'YARDS',
+                                'grade'        => $insItem->grade ?? 1,
+                            ];
+                        }
                     }
                 }
             }
 
-            // Fallback: cari langsung di tabel inspecting jika belum ketemu
+            // Fallback tambahan berdasarkan QR Code penuh
             if (!$gudangJadi) {
-                $searchQr = !empty($cleanQrCode) ? $cleanQrCode : $db_qr_code;
                 $insMklItem = DB::table('inspecting_mkl_bj_items')
                     ->where('qr_code', $searchQr)
                     ->orWhere('qr_code', $db_qr_code)
@@ -271,7 +284,6 @@ class OpnamePcsController extends Controller
             }
 
             if (!$gudangJadi) {
-                $searchQr = !empty($cleanQrCode) ? $cleanQrCode : $db_qr_code;
                 $insItem = DB::table('inspecting_item')
                     ->where('qr_code', $searchQr)
                     ->orWhere('qr_code', $db_qr_code)
@@ -421,7 +433,7 @@ class OpnamePcsController extends Controller
             ]);
 
             // =========================================================================
-            // FITUR BARU: UPDATE LOKASI BARANG PADA TABEL TRN_GUDANG_JADI
+            // FITUR: UPDATE LOKASI BARANG PADA TABEL TRN_GUDANG_JADI (JIKA ADA DI STOK)
             // =========================================================================
             if ($id_trn_gudang_jadi) {
                 DB::table('trn_gudang_jadi')
@@ -473,7 +485,6 @@ class OpnamePcsController extends Controller
             ], 200);
         }
     }
-
 
     /**
      * Update data opname pcs & sinkronkan lokasi ke trn_gudang_jadi
@@ -568,7 +579,7 @@ class OpnamePcsController extends Controller
                 'success' => false,
                 'message' => 'Gagal memperbarui opname pcs: ' . $th->getMessage(),
                 'data'    => null,
-            ], 200);
+                ], 200);
         }
     }
 
