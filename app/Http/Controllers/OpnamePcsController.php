@@ -312,61 +312,6 @@ class OpnamePcsController extends Controller
                 ], 200);
             }
 
-            $id_trn_gudang_jadi = ($gudangJadi && !empty($gudangJadi->id)) ? $gudangJadi->id : null;
-
-            // =========================================================================
-            // 🛑 VALIDASI DUPLIKAT DI SINI: Cek qr_code atau id_trn_gudang_jadi di DB
-            // =========================================================================
-            $existingQuery = DB::table('trn_gudang_jadi_opname_pcs')
-                ->where(function($q) use ($db_qr_code, $id_trn_gudang_jadi) {
-                    $q->where('qr_code', $db_qr_code);
-                    if ($id_trn_gudang_jadi) {
-                        $q->orWhere('id_trn_gudang_jadi', $id_trn_gudang_jadi);
-                    }
-                });
-
-            $existing = $existingQuery->first();
-
-            if ($existing) {
-                // Ambil & format tanggal opname dari created_at
-                $opnamedDate = '';
-                if (!empty($existing->created_at)) {
-                    if (is_numeric($existing->created_at)) {
-                        $opnamedDate = date('d-m-Y H:i', (int)$existing->created_at);
-                    } else {
-                        try {
-                            $opnamedDate = Carbon::parse($existing->created_at)->format('d-m-Y H:i');
-                        } catch (\Throwable $t) {
-                            $opnamedDate = (string)$existing->created_at;
-                        }
-                    }
-                }
-
-                $dateMsg = !empty($opnamedDate) ? " pada tanggal " . $opnamedDate : "";
-
-                DB::rollBack();
-                return response()->json([
-                    'success'      => false,
-                    'message'      => 'Stock (' . $db_qr_code . ') ini sudah pernah di-opname' . $dateMsg . '!',
-                    'is_duplicate' => true,
-                    'data'         => $existing,
-                ], 200);
-            }
-
-            // Jika opname_code kosong, baru generate otomatis
-            if (empty($opname_code)) {
-                $latest = DB::table('trn_gudang_jadi_opname_pcs')
-                    ->where('opname_code', 'ILIKE', 'OPN-PCS-%')
-                    ->orderBy('id', 'desc')
-                    ->value('opname_code');
-
-                $nextNum = 1;
-                if ($latest && preg_match('/OPN-PCS-(\d+)/i', $latest, $m)) {
-                    $nextNum = ((int)$m[1]) + 1;
-                }
-                $opname_code = sprintf('OPN-PCS-%03d', $nextNum);
-            }
-            
             $letterToGrade = [
                 'A' => 1, 'B' => 2, 'C' => 3, 'D' => 4, 'E' => 5,
                 '1' => 1, '2' => 2, '3' => 3, '4' => 4, '5' => 5,
@@ -413,6 +358,133 @@ class OpnamePcsController extends Controller
             }
 
             $now = time();
+            $id_trn_gudang_jadi = ($gudangJadi && !empty($gudangJadi->id)) ? $gudangJadi->id : null;
+
+            // Jika opname_code kosong, generate otomatis
+            if (empty($opname_code)) {
+                $latest = DB::table('trn_gudang_jadi_opname_pcs')
+                    ->where('opname_code', 'ILIKE', 'OPN-PCS-%')
+                    ->orderBy('id', 'desc')
+                    ->value('opname_code');
+
+                $nextNum = 1;
+                if ($latest && preg_match('/OPN-PCS-(\d+)/i', $latest, $m)) {
+                    $nextNum = ((int)$m[1]) + 1;
+                }
+                $opname_code = sprintf('OPN-PCS-%03d', $nextNum);
+            }
+
+            // =========================================================================
+            // 🚀 AUTO CREATE STOCK GUDANG JADI AGAR WO/SC/BUYER LANGSUNG TERHUBUNG
+            // =========================================================================
+            if (!$id_trn_gudang_jadi) {
+                $wo_id = null;
+                $color = '-';
+                $source = ($ins_type === 'INS2' || $ins_type === 'MKL') ? 3 : 1;
+                $transFrom = !empty($ins_type) ? $ins_type : 'INS';
+
+                // 1. Ekstrak No WO & Warna dari teks barcode (parts[1] = No WO, parts[4] = Warna)
+                if (!empty($qr_code_desc) && strpos($qr_code_desc, '!') !== false) {
+                    $parts = explode('!', $qr_code_desc);
+                    if (isset($parts[1]) && !empty(trim($parts[1]))) {
+                        $wo_no = trim($parts[1]);
+                        $wo = DB::table('trn_wo')->where('wo_no', $wo_no)->first();
+                        if ($wo) {
+                            $wo_id = $wo->id;
+                        }
+                    }
+                    if (isset($parts[4]) && !empty(trim($parts[4]))) {
+                        $color = trim($parts[4]);
+                    }
+                }
+
+                // 2. Fallback cari WO dari header inspecting jika belum dapat dari teks
+                if (!$wo_id && $ins_item_id > 0) {
+                    if ($ins_type === 'INS2' || $ins_type === 'MKL') {
+                        $insItemObj = DB::table('inspecting_mkl_bj_items')->where('id', $ins_item_id)->first();
+                        if ($insItemObj && isset($insItemObj->inspecting_mkl_bj_id)) {
+                            $insHeader = DB::table('inspecting_mkl_bj')->where('id', $insItemObj->inspecting_mkl_bj_id)->first();
+                            if ($insHeader) {
+                                $wo_id = $insHeader->wo_id ?? null;
+                            }
+                        }
+                    } else {
+                        $insItemObj = DB::table('inspecting_item')->where('id', $ins_item_id)->first();
+                        if ($insItemObj && isset($insItemObj->inspecting_id)) {
+                            $insHeader = DB::table('inspecting')->where('id', $insItemObj->inspecting_id)->first();
+                            if ($insHeader) {
+                                $wo_id = $insHeader->wo_id ?? null;
+                            }
+                        }
+                    }
+                }
+
+                // Jika WO berhasil ditemukan, langsung buat record resmi di trn_gudang_jadi
+                if ($wo_id) {
+                    $unitInt = (strtoupper(trim((string)$unit)) === 'METER' || strtoupper(trim((string)$unit)) === 'MTR' || $unit == 2) ? 2 : 1;
+                    $id_trn_gudang_jadi = DB::table('trn_gudang_jadi')->insertGetId([
+                        'jenis_gudang' => ($db_grade == 2) ? 2 : 1,
+                        'wo_id'        => $wo_id,
+                        'source'       => $source,
+                        'source_ref'   => 'Opname ' . $opname_code,
+                        'unit'         => $unitInt,
+                        'qty'          => (float)$qty,
+                        'date'         => date('Y-m-d'),
+                        'status'       => 1, // STATUS_STOCK = 1
+                        'note'         => 'Dibuat otomatis dari Stok Opname ' . $opname_code,
+                        'color'        => mb_substr($color, 0, 255),
+                        'grade'        => $db_grade,
+                        'locs_code'    => mb_substr($locs_code, 0, 25),
+                        'trans_from'   => $transFrom,
+                        'id_from'      => $ins_item_id > 0 ? $ins_item_id : null,
+                        'qr_code'      => $searchQr,
+                        'qr_code_desc' => mb_substr($qr_code_desc, 0, 255),
+                        'created_at'   => $now,
+                        'created_by'   => $created_by ?: 1,
+                        'updated_at'   => $now,
+                        'updated_by'   => $created_by ?: 1,
+                    ]);
+                }
+            }
+
+            // =========================================================================
+            // 🛑 VALIDASI DUPLIKAT DI SINI: Cek qr_code atau id_trn_gudang_jadi di DB
+            // =========================================================================
+            $existingQuery = DB::table('trn_gudang_jadi_opname_pcs')
+                ->where(function($q) use ($db_qr_code, $id_trn_gudang_jadi) {
+                    $q->where('qr_code', $db_qr_code);
+                    if ($id_trn_gudang_jadi) {
+                        $q->orWhere('id_trn_gudang_jadi', $id_trn_gudang_jadi);
+                    }
+                });
+
+            $existing = $existingQuery->first();
+
+            if ($existing) {
+                // Ambil & format tanggal opname dari created_at
+                $opnamedDate = '';
+                if (!empty($existing->created_at)) {
+                    if (is_numeric($existing->created_at)) {
+                        $opnamedDate = date('d-m-Y H:i', (int)$existing->created_at);
+                    } else {
+                        try {
+                            $opnamedDate = Carbon::parse($existing->created_at)->format('d-m-Y H:i');
+                        } catch (\Throwable $t) {
+                            $opnamedDate = (string)$existing->created_at;
+                        }
+                    }
+                }
+
+                $dateMsg = !empty($opnamedDate) ? " pada tanggal " . $opnamedDate : "";
+
+                DB::rollBack();
+                return response()->json([
+                    'success'      => false,
+                    'message'      => 'Stock (' . $db_qr_code . ') ini sudah pernah di-opname' . $dateMsg . '!',
+                    'is_duplicate' => true,
+                    'data'         => $existing,
+                ], 200);
+            }
 
             // Insert data baru ke trn_gudang_jadi_opname_pcs
             $id = DB::table('trn_gudang_jadi_opname_pcs')->insertGetId([
