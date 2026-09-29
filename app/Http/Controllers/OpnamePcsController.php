@@ -242,6 +242,17 @@ class OpnamePcsController extends Controller
                 }
             }
 
+            // 1b. Cari berdasarkan qr_code jika belum ketemu
+            if (!$id_trn_gudang_jadi) {
+                $gudangJadi = DB::table('trn_gudang_jadi')
+                    ->where('qr_code', $db_qr_code)
+                    ->orWhere('qr_code', $qr_code)
+                    ->first();
+                if ($gudangJadi) {
+                    $id_trn_gudang_jadi = $gudangJadi->id;
+                }
+            }
+
             // Ekstrak info dari barcode jika format teks pemisah '!'
             $wo_no = null;
             $color = null;
@@ -449,10 +460,11 @@ class OpnamePcsController extends Controller
                 'updated_by'         => $created_by,
             ]);
 
-            // Update lokasi & warna pada master gudang jadi jika ada relasinya
+            // Update lokasi, status (OUT -> STOCK), & warna pada master gudang jadi jika ada relasinya
             if ($id_trn_gudang_jadi) {
                 $updateGj = [
                     'locs_code'  => $locs_code,
+                    'status'     => 1, // KEMBALI KE STATUS_STOCK = 1 (READY / STOCK)
                     'updated_at' => $now,
                     'updated_by' => $created_by
                 ];
@@ -555,14 +567,21 @@ class OpnamePcsController extends Controller
                 ->update($updateData);
 
             // Jika lokasi diubah, update juga ke master trn_gudang_jadi
-            if (!empty($locs_code) && !empty($opnamePcs->id_trn_gudang_jadi)) {
+            if (!empty($opnamePcs->id_trn_gudang_jadi)) {
+                $updateGj = [
+                    'status'     => 1, // KEMBALI KE STATUS_STOCK = 1
+                    'updated_at' => $now,
+                    'updated_by' => $updated_by
+                ];
+                if (!empty($locs_code)) {
+                    $updateGj['locs_code'] = $locs_code;
+                }
+                if ($qty !== null) {
+                    $updateGj['qty'] = (float)$qty;
+                }
                 DB::table('trn_gudang_jadi')
                     ->where('id', $opnamePcs->id_trn_gudang_jadi)
-                    ->update([
-                        'locs_code'  => $locs_code,
-                        'updated_at' => $now,
-                        'updated_by' => $updated_by
-                    ]);
+                    ->update($updateGj);
             }
 
             DB::commit();
