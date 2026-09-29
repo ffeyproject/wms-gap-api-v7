@@ -343,10 +343,8 @@ class OpnamePcsController extends Controller
                     } else {
                         $insData = DB::table('inspecting_item as a')
                             ->join('trn_inspecting as b', 'a.inspecting_id', '=', 'b.id')
-                            ->leftJoin('trn_wo_color as c', 'b.wo_color_id', '=', 'c.id')
-                            ->leftJoin('trn_mo_color as d', 'c.mo_color_id', '=', 'd.id')
                             ->where('a.id', $ins_item_id)
-                            ->select('b.wo_id', 'b.no_lot', DB::raw("COALESCE(b.kombinasi, d.color) as color_name"))
+                            ->select('b.wo_id', 'b.no_lot', 'b.kombinasi as color_name')
                             ->first();
 
                         if ($insData) {
