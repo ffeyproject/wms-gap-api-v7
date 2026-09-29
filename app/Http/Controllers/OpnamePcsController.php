@@ -10,7 +10,7 @@ use Carbon\Carbon;
 class OpnamePcsController extends Controller
 {
     /**
-     * Ekstrak nama warna dari string No. Lot jika warna diisi di lot (contoh: ET 04 / COKLAT TUA -> COKLAT TUA)
+     * Ekstrak nama warna dari string No. Lot jika warna diisi di lot (contoh: D2606/01738L -> D2606, atau ET 04 / COKLAT TUA -> COKLAT TUA)
      */
     public static function extractColorFromLot($lot)
     {
@@ -21,6 +21,11 @@ class OpnamePcsController extends Controller
 
         if (strpos($lot, '/') !== false) {
             $parts = array_map('trim', explode('/', $lot));
+            // Jika bagian depan berformat kode desain D0000 / D2606, ambil bagian depan
+            if (isset($parts[0]) && preg_match('/^D\d+/i', $parts[0])) {
+                return $parts[0];
+            }
+            // Atau jika ada nama warna tekstual di bagian akhir
             for ($i = count($parts) - 1; $i >= 0; $i--) {
                 $p = $parts[$i];
                 $cleanP = trim(preg_replace('/^\d+\s*[\/-]?\s*/', '', $p));
@@ -28,26 +33,22 @@ class OpnamePcsController extends Controller
                     return $cleanP;
                 }
             }
-            $last = end($parts);
-            if (!empty($last)) {
-                return $last;
-            }
+            return $parts[0];
         }
 
         return $lot;
     }
 
     /**
-     * Get list data opname pcs (Hanya mengambil data jika rak dipilih)
+     * Get list data opname pcs dengan filter lokasi rak / kode opname
      */
     public function GetList(Request $request)
     {
         try {
-            $opname_code = $request->json('opname_code') ?? $request->input('opname_code');
             $locs_code   = $request->json('locs_code') ?? $request->input('locs_code');
+            $opname_code = $request->json('opname_code') ?? $request->input('opname_code');
             $status      = $request->json('status') ?? $request->input('status');
 
-            // JIKA TIDAK ADA RAK & TIDAK ADA KODE OPNAME YANG DIPILIH, JANGAN TAMPILKAN APA-APA
             if (empty($locs_code) && empty($opname_code)) {
                 return response()->json([
                     'success' => true,
@@ -262,8 +263,12 @@ class OpnamePcsController extends Controller
                 if (isset($parts[1]) && !empty(trim($parts[1]))) {
                     $wo_no = trim($parts[1]);
                 }
-                if (isset($parts[4]) && !empty(trim($parts[4]))) {
+                if (isset($parts[4]) && !empty(trim($parts[4])) && trim($parts[4]) !== '-') {
                     $color = trim($parts[4]);
+                }
+                // Fallback jika color kosong atau '-', ambil dari parts[2] (No Lot / Design seperti D2606/01738L)
+                if ((empty($color) || $color === '-') && isset($parts[2]) && !empty(trim($parts[2])) && trim($parts[2]) !== '-') {
+                    $color = self::extractColorFromLot($parts[2]);
                 }
                 if (empty($join_piece) && isset($parts[5]) && !empty(trim($parts[5]))) {
                     $join_piece = trim($parts[5]);
@@ -371,7 +376,7 @@ class OpnamePcsController extends Controller
                 }
 
                 // Fallback cari warna dari WO jika masih kosong
-                if (empty($color) && $wo_id) {
+                if ((empty($color) || $color === '-') && $wo_id) {
                     $woColor = DB::table('trn_wo_color as a')
                         ->join('trn_mo_color as b', 'a.mo_color_id', '=', 'b.id')
                         ->where('a.wo_id', $wo_id)
@@ -408,6 +413,24 @@ class OpnamePcsController extends Controller
                         'updated_at'   => $now,
                         'updated_by'   => $created_by ?: 1,
                     ]);
+                }
+            } else {
+                // Jika id_trn_gudang_jadi sudah ada, pastikan warna tidak strip/kosong
+                if (empty($color) || $color === '-') {
+                    $gj = DB::table('trn_gudang_jadi')->where('id', $id_trn_gudang_jadi)->first();
+                    if ($gj) {
+                        if (!empty($gj->color) && $gj->color !== '-') {
+                            $color = $gj->color;
+                        } elseif (!empty($gj->source_ref)) {
+                            $lotFromIns = DB::table('trn_inspecting')->where('no', $gj->source_ref)->value('no_lot');
+                            if (!$lotFromIns) {
+                                $lotFromIns = DB::table('inspecting_mkl_bj')->where('no', $gj->source_ref)->value('no_lot');
+                            }
+                            if (!empty($lotFromIns) && trim($lotFromIns) !== '-') {
+                                $color = self::extractColorFromLot($lotFromIns);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -653,4 +676,3 @@ class OpnamePcsController extends Controller
         }
     }
 }
-
