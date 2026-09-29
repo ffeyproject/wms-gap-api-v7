@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 namespace App\Http\Controllers;
 
@@ -19,7 +19,6 @@ class LogViewerController extends BaseController
                 ]);
             }
 
-            // Cari semua file .log di storage/logs/
             $files = glob($logPath . '/*.log');
             if (empty($files)) {
                 return response()->json([
@@ -29,7 +28,6 @@ class LogViewerController extends BaseController
                 ]);
             }
 
-            // Urutkan file berdasarkan waktu perubahan terbaru
             usort($files, function ($a, $b) {
                 return filemtime($b) - filemtime($a);
             });
@@ -37,7 +35,6 @@ class LogViewerController extends BaseController
             $latestFile = $files[0];
             $fileName = basename($latestFile);
 
-            // Baca baris file log
             $lines = file($latestFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
             if (empty($lines)) {
                 return response()->json([
@@ -47,14 +44,12 @@ class LogViewerController extends BaseController
                 ]);
             }
 
-            // Ambil maksimal 300 baris terakhir
             $lines = array_slice($lines, -300);
 
             $parsedLogs = [];
             $currentLog = null;
 
             foreach ($lines as $line) {
-                // Pola fleksibel: mencocokkan [YYYY-MM-DD ...] LEVEL: pesan
                 if (preg_match('/^\[(\d{4}-\d{2}-\d{2}[^\]]*)\]\s*(?:([a-zA-Z0-9_-]+)\.)?([A-Z]+):\s*(.*)$/', $line, $matches)) {
                     if ($currentLog !== null) {
                         $parsedLogs[] = $currentLog;
@@ -67,7 +62,6 @@ class LogViewerController extends BaseController
                         'file'      => $fileName
                     ];
                 } elseif (preg_match('/^\[(\d{4}-\d{2}-\d{2}[^\]]*)\]\s*(.*)$/', $line, $matches)) {
-                    // Fallback jika tidak ada level ERROR/INFO
                     if ($currentLog !== null) {
                         $parsedLogs[] = $currentLog;
                     }
@@ -79,7 +73,6 @@ class LogViewerController extends BaseController
                         'file'      => $fileName
                     ];
                 } else {
-                    // Jika lanjutan dari stack trace error sebelumnya
                     if ($currentLog !== null && strlen($currentLog['message']) < 1500) {
                         $currentLog['message'] .= "\n" . trim($line);
                     }
@@ -90,7 +83,6 @@ class LogViewerController extends BaseController
                 $parsedLogs[] = $currentLog;
             }
 
-            // Urutkan dari log paling baru di atas
             $parsedLogs = array_reverse($parsedLogs);
 
             return response()->json([
