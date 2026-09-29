@@ -17,26 +17,7 @@ class OpnamePcsController extends Controller
         if (empty($lot) || trim($lot) === '-') {
             return null;
         }
-        $lot = trim($lot);
-
-        if (strpos($lot, '/') !== false) {
-            $parts = array_map('trim', explode('/', $lot));
-            // Jika bagian depan berformat kode desain D0000 / D2606, ambil bagian depan
-            if (isset($parts[0]) && preg_match('/^D\d+/i', $parts[0])) {
-                return $parts[0];
-            }
-            // Atau jika ada nama warna tekstual di bagian akhir
-            for ($i = count($parts) - 1; $i >= 0; $i--) {
-                $p = $parts[$i];
-                $cleanP = trim(preg_replace('/^\d+\s*[\/-]?\s*/', '', $p));
-                if (preg_match('/[a-zA-Z]{3,}/', $cleanP)) {
-                    return $cleanP;
-                }
-            }
-            return $parts[0];
-        }
-
-        return $lot;
+        return trim($lot);
     }
 
     /**
