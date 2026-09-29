@@ -15,6 +15,10 @@ $router->get('/', function () use ($router) {
     return $router->app->version();
 });
 
+// Route Log Viewer (Dashboard Error Logs)
+$router->get('logs', 'LogViewerController@index');
+$router->get('v1/system/logs', 'LogViewerController@index');
+
 $router->group(['prefix' => 'v1'], function() use ($router) {
     $router->group(['prefix' => 'auth'], function() use ($router){
         $router->post('login', 'AuthController@login');
