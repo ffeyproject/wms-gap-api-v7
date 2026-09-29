@@ -342,7 +342,7 @@ class OpnamePcsController extends Controller
                         }
                     } else {
                         $insData = DB::table('inspecting_item as a')
-                            ->join('inspecting as b', 'a.inspecting_id', '=', 'b.id')
+                            ->join('trn_inspecting as b', 'a.inspecting_id', '=', 'b.id')
                             ->leftJoin('trn_wo_color as c', 'b.wo_color_id', '=', 'c.id')
                             ->leftJoin('trn_mo_color as d', 'c.mo_color_id', '=', 'd.id')
                             ->where('a.id', $ins_item_id)
