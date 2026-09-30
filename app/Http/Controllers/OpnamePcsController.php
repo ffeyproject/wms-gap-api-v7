@@ -245,7 +245,11 @@ class OpnamePcsController extends Controller
                     $wo_no = trim($parts[1]);
                 }
                 if (isset($parts[4]) && !empty(trim($parts[4])) && trim($parts[4]) !== '-') {
-                    $color = trim($parts[4]);
+                    $rawColor = trim($parts[4]);
+                    // Jika bukan angka murni (seperti '14'), gunakan sebagai nama warna
+                    if (!is_numeric($rawColor)) {
+                        $color = $rawColor;
+                    }
                 }
                 // Fallback jika color kosong atau '-', ambil dari parts[2] (No Lot / Design seperti D2606/01738L)
                 if ((empty($color) || $color === '-') && isset($parts[2]) && !empty(trim($parts[2])) && trim($parts[2]) !== '-') {

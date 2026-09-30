@@ -285,6 +285,55 @@ class QrController extends Controller
             $data = DB::select("SELECT * FROM trn_gudang_jadi WHERE qr_code = '$qr_code' OR id = $id");
         }
 
+        // FALLBACK: Jika pencarian prefix tidak menemukan data, cari langsung berdasarkan qr_code / qr_code_desc
+        if (count($data) < 1) {
+            $gjItem = DB::table('trn_gudang_jadi as a')
+                ->leftJoin('trn_wo as b', 'a.wo_id', '=', 'b.id')
+                ->where('a.qr_code', $qr_code)
+                ->orWhere('a.qr_code_desc', $qr_code)
+                ->select(
+                    'a.id as id_trn_gudang_jadi',
+                    'a.qr_code',
+                    'a.qr_code_desc',
+                    'a.locs_code',
+                    'a.color',
+                    'a.qty',
+                    'a.unit',
+                    'a.grade',
+                    'b.no as no_wo'
+                )
+                ->first();
+
+            if ($gjItem) {
+                $data = [$gjItem];
+            } else {
+                $insDirect = DB::table('inspecting_item as b')
+                    ->join('trn_inspecting as a', 'b.inspecting_id', '=', 'a.id')
+                    ->leftJoin('trn_gudang_jadi as c', 'b.qr_code', '=', 'c.qr_code')
+                    ->where('b.qr_code', $qr_code)
+                    ->orWhere('b.qr_code_desc', $qr_code)
+                    ->select(
+                        'b.id',
+                        'b.inspecting_id',
+                        'b.grade',
+                        'b.join_piece',
+                        DB::raw('COALESCE(c.qty, b.qty) as qty'),
+                        'b.qr_code',
+                        'b.qr_code_desc',
+                        'c.id as id_trn_gudang_jadi',
+                        'c.locs_code',
+                        DB::raw('COALESCE(c.color, a.kombinasi) as color'),
+                        'a.kombinasi',
+                        'a.no_lot',
+                        'a.k3l_code as no_wo'
+                    )
+                    ->first();
+                if ($insDirect) {
+                    $data = [$insDirect];
+                }
+            }
+        }
+
         if (count($data) < 1) {
             return response()->json([
                 'success' => false,
