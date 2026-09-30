@@ -56,7 +56,8 @@ class OpnamePcsController extends Controller
                     'a.created_by',
                     'a.updated_at',
                     'a.updated_by',
-                    'b.locs_code as current_gudang_locs_code'
+                    'b.locs_code as current_gudang_locs_code',
+                    'b.color as color'
                 )
                 ->leftJoin('trn_gudang_jadi as b', 'a.id_trn_gudang_jadi', '=', 'b.id');
 
@@ -250,10 +251,6 @@ class OpnamePcsController extends Controller
                     if (!is_numeric($rawColor)) {
                         $color = $rawColor;
                     }
-                }
-                // Fallback jika color kosong atau '-', ambil dari parts[2] (No Lot / Design seperti D2606/01738L)
-                if ((empty($color) || $color === '-') && isset($parts[2]) && !empty(trim($parts[2])) && trim($parts[2]) !== '-') {
-                    $color = self::extractColorFromLot($parts[2]);
                 }
                 if (empty($join_piece) && isset($parts[5]) && !empty(trim($parts[5]))) {
                     $join_piece = trim($parts[5]);
