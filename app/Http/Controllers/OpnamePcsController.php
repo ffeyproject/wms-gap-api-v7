@@ -86,15 +86,51 @@ class OpnamePcsController extends Controller
 
             $data = $query->orderBy('a.id', 'DESC')->get();
 
-            $smallintToLetter = [
-                1 => 'A', 2 => 'B', 3 => 'C', 4 => 'D', 5 => 'E',
-                '1' => 'A', '2' => 'B', '3' => 'C', '4' => 'D', '5' => 'E',
+                        $smallintToLetter = [
+                1 => 'A', 2 => 'B', 3 => 'C', 4 => 'PK', 5 => 'SAMPLE', 7 => 'A+', 8 => 'A*', 9 => 'PUTIH', 10 => 'D',
+                '1' => 'A', '2' => 'B', '3' => 'C', '4' => 'PK', '5' => 'SAMPLE', '7' => 'A+', '8' => 'A*', '9' => 'PUTIH', '10' => 'D',
             ];
 
             foreach ($data as $item) {
                 if (isset($item->grade)) {
                     $g = (string)$item->grade;
                     $item->grade = isset($smallintToLetter[$g]) ? $smallintToLetter[$g] : $g;
+                }
+
+                $currentColor = $item->color ?? '';
+                // Jika color kosong, tanda strip, berupa angka celup (14), atau berupa nomor WO (D2607/...)
+                if (empty($currentColor) || $currentColor === '-' || is_numeric($currentColor) || preg_match('/^[A-Z]?\d{4}\//i', $currentColor) || preg_match('/^\d{2}-[A-Z]-\d+/i', $currentColor)) {
+                    $realColor = null;
+                    if (!empty($item->qr_code) && preg_match('/(INS2|INS|MKL)-\d+-(\d+)/i', $item->qr_code, $insMatches)) {
+                        $insType = strtoupper($insMatches[1]);
+                        $insItemId = (int)$insMatches[2];
+                        if ($insType === 'INS') {
+                            $realColor = DB::table('inspecting_item as a')
+                                ->join('trn_inspecting as b', 'a.inspecting_id', '=', 'b.id')
+                                ->where('a.id', $insItemId)
+                                ->value('b.kombinasi');
+                        } elseif ($insType === 'INS2' || $insType === 'MKL') {
+                            $realColor = DB::table('inspecting_mkl_bj_items as a')
+                                ->join('inspecting_mkl_bj as b', 'a.inspecting_id', '=', 'b.id')
+                                ->leftJoin('trn_wo_color as c', 'b.wo_color_id', '=', 'c.id')
+                                ->leftJoin('trn_mo_color as d', 'c.mo_color_id', '=', 'd.id')
+                                ->where('a.id', $insItemId)
+                                ->value('d.color');
+                        }
+                    }
+
+                    if (!empty($realColor) && $realColor !== '-' && !is_numeric($realColor) && !preg_match('/^[A-Z]?\d{4}\//i', $realColor)) {
+                        $item->color = $realColor;
+                        if (!empty($item->id_trn_gudang_jadi)) {
+                            try {
+                                DB::table('trn_gudang_jadi')
+                                    ->where('id', $item->id_trn_gudang_jadi)
+                                    ->update(['color' => $realColor]);
+                            } catch (\Throwable $ignored) {}
+                        }
+                    } else {
+                        $item->color = '-';
+                    }
                 }
             }
 
@@ -238,7 +274,8 @@ class OpnamePcsController extends Controller
 
             // Ekstrak info dari barcode jika format teks pemisah '!'
             $wo_no = null;
-            $color = null;
+            $reqColor = $request->json('color') ?? $request->input('color');
+            $color = (!empty($reqColor) && $reqColor !== '-' && !is_numeric($reqColor) && !preg_match('/^[A-Z]?\d{4}\//i', $reqColor) && !preg_match('/^\d{2}-[A-Z]-\d+/i', $reqColor)) ? $reqColor : null;
             $sourceStr = !empty($qr_code_desc) ? $qr_code_desc : $qr_code;
             if (strpos($sourceStr, '!') !== false) {
                 $parts = explode('!', $sourceStr);
