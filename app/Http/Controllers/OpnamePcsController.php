@@ -236,6 +236,15 @@ class OpnamePcsController extends Controller
             $qr_code = trim(str_replace(["\r", "\n", "\0"], '', $qr_code));
             $db_qr_code = mb_substr($qr_code, 0, 100);
 
+            // Clean QR code untuk kolom trn_gudang_jadi.qr_code (varchar 25)
+            $clean_gj_qr = $qr_code;
+            if (preg_match('/(INS2|INS|MKL)-\d+-\d+/i', $qr_code, $mClean)) {
+                $clean_gj_qr = strtoupper($mClean[0]);
+            } elseif (preg_match('/STK-\d+/i', $qr_code, $mStk)) {
+                $clean_gj_qr = strtoupper($mStk[0]);
+            }
+            $clean_gj_qr = mb_substr($clean_gj_qr, 0, 25);
+
             // Extract IDs & prefixes dari QR code string
             $stock_id = 0;
             $ins_item_id = 0;
@@ -258,6 +267,29 @@ class OpnamePcsController extends Controller
                 $gudangJadi = DB::table('trn_gudang_jadi')->where('id', $stock_id)->first();
                 if ($gudangJadi) {
                     $id_trn_gudang_jadi = $gudangJadi->id;
+                }
+            }
+
+            // 1c. Jika ins_item_id belum didapat dari pola QR code, cari di inspecting_item / inspecting_mkl_bj_items
+            if ($ins_item_id == 0) {
+                $itemIns = DB::table('inspecting_item')
+                    ->where('qr_code', $db_qr_code)
+                    ->orWhere('qr_code', $qr_code)
+                    ->orWhere('qr_code_desc', $sourceStr)
+                    ->first();
+                if ($itemIns) {
+                    $ins_type = 'INS';
+                    $ins_item_id = $itemIns->id;
+                } else {
+                    $itemMkl = DB::table('inspecting_mkl_bj_items')
+                        ->where('qr_code', $db_qr_code)
+                        ->orWhere('qr_code', $qr_code)
+                        ->orWhere('qr_code_desc', $sourceStr)
+                        ->first();
+                    if ($itemMkl) {
+                        $ins_type = 'MKL';
+                        $ins_item_id = $itemMkl->id;
+                    }
                 }
             }
 
@@ -414,7 +446,7 @@ class OpnamePcsController extends Controller
                     $source = ($ins_type === 'INS2' || $ins_type === 'MKL') ? 3 : 1;
                     $unitInt = (strtoupper(trim((string)$unit)) === 'METER' || strtoupper(trim((string)$unit)) === 'MTR' || $unit == 2) ? 2 : 1;
 
-                    $id_trn_gudang_jadi = DB::table('trn_gudang_jadi')->insertGetId([
+                    $gjData = [
                         'jenis_gudang' => ($db_grade == 2) ? 2 : 1,
                         'wo_id'        => $wo_id,
                         'source'       => $source,
@@ -427,11 +459,18 @@ class OpnamePcsController extends Controller
                         'color'        => mb_substr($color, 0, 255),
                         'grade'        => $db_grade,
                         'locs_code'    => mb_substr($locs_code, 0, 25),
+                        'qr_code'      => $clean_gj_qr,
+                        'qr_code_desc' => $qr_code_desc,
                         'created_at'   => $now,
                         'created_by'   => $created_by ?: 1,
                         'updated_at'   => $now,
                         'updated_by'   => $created_by ?: 1,
-                    ]);
+                    ];
+                    if ($ins_item_id > 0) {
+                        $gjData['trans_from'] = ($ins_type === 'MKL' || $ins_type === 'INS2') ? 'MKL' : 'INS';
+                        $gjData['id_from']    = $ins_item_id;
+                    }
+                    $id_trn_gudang_jadi = DB::table('trn_gudang_jadi')->insertGetId($gjData);
                 }
             } else {
                 // Jika id_trn_gudang_jadi sudah ada, pastikan warna tidak strip/kosong
@@ -502,7 +541,7 @@ class OpnamePcsController extends Controller
                 'updated_by'         => $created_by,
             ]);
 
-            // Update lokasi, status (OUT -> STOCK), & warna pada master gudang jadi jika ada relasinya
+            // Update lokasi, status (OUT -> STOCK), warna, & info inspecting pada master gudang jadi jika ada relasinya
             if ($id_trn_gudang_jadi) {
                 $updateGj = [
                     'locs_code'  => $locs_code,
@@ -512,6 +551,16 @@ class OpnamePcsController extends Controller
                 ];
                 if (!empty($color) && $color !== '-') {
                     $updateGj['color'] = mb_substr($color, 0, 255);
+                }
+                if ($ins_item_id > 0) {
+                    $updateGj['trans_from'] = ($ins_type === 'MKL' || $ins_type === 'INS2') ? 'MKL' : 'INS';
+                    $updateGj['id_from']    = $ins_item_id;
+                }
+                if (!empty($db_qr_code)) {
+                    $updateGj['qr_code'] = $clean_gj_qr;
+                }
+                if (!empty($qr_code_desc)) {
+                    $updateGj['qr_code_desc'] = $qr_code_desc;
                 }
                 DB::table('trn_gudang_jadi')
                     ->where('id', $id_trn_gudang_jadi)
