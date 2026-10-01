@@ -244,6 +244,7 @@ class OpnamePcsController extends Controller
                 $clean_gj_qr = strtoupper($mStk[0]);
             }
             $clean_gj_qr = mb_substr($clean_gj_qr, 0, 25);
+            $sourceStr = !empty($qr_code_desc) ? $qr_code_desc : $qr_code;
 
             // Extract IDs & prefixes dari QR code string
             $stock_id = 0;
