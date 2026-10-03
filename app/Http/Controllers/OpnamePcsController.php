@@ -703,7 +703,7 @@ class OpnamePcsController extends Controller
         try {
             DB::beginTransaction();
 
-            $id = $request->json()->get('id');
+            $id = $request->json()->get('id') ?? $request->input('id');
 
             if (!$id) {
                 DB::rollBack();
@@ -724,13 +724,42 @@ class OpnamePcsController extends Controller
                 ], 200);
             }
 
+            $now = time();
+
+            // Pindahkan kembali lokasi barang ke 'Transit' pada tabel trn_gudang_jadi
+            if (!empty($opnamePcs->id_trn_gudang_jadi)) {
+                DB::table('trn_gudang_jadi')
+                    ->where('id', $opnamePcs->id_trn_gudang_jadi)
+                    ->update([
+                        'locs_code'  => 'Transit',
+                        'updated_at' => $now,
+                    ]);
+            } elseif (!empty($opnamePcs->qr_code)) {
+                $cleanQr = trim($opnamePcs->qr_code);
+                $db_qr_code = mb_substr($cleanQr, 0, 100);
+                $clean_gj_qr = mb_substr($cleanQr, 0, 25);
+                if (preg_match('/(INS2|INS|MKL)-\d+-\d+/i', $cleanQr, $mClean)) {
+                    $clean_gj_qr = mb_substr(strtoupper($mClean[0]), 0, 25);
+                }
+
+                DB::table('trn_gudang_jadi')
+                    ->where('qr_code', $db_qr_code)
+                    ->orWhere('qr_code', $clean_gj_qr)
+                    ->orWhere('qr_code', $cleanQr)
+                    ->update([
+                        'locs_code'  => 'Transit',
+                        'updated_at' => $now,
+                    ]);
+            }
+
+            // Hapus record dari tabel opname pcs
             DB::table('trn_gudang_jadi_opname_pcs')->where('id', $id)->delete();
 
             DB::commit();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Berhasil menghapus data opname pcs!',
+                'message' => 'Berhasil menghapus item opname pcs dan mengembalikan lokasi barang ke TRANSIT!',
                 'data'    => null,
             ], 200);
 
