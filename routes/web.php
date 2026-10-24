@@ -88,6 +88,7 @@ $router->group(['prefix' => 'v1'], function() use ($router) {
         $router->put('reject-receipt-mklbj', 'ReceiptController@RejectItemMklbj');
         $router->post('submit-receipt-inspecting', 'ReceiptController@ReceiptItemInspecting');
         $router->post('submit-receipt-mklbj', 'ReceiptController@ReceiptItemMklbj');
+        $router->post('sync-received-status', 'ReceiptController@SyncReceivedStatus');
     });
 
     $router->group(['prefix' => 'trn-kirim-buyer-header', 'middleware' => 'auth'], function () use ($router){

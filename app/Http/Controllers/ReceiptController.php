@@ -66,6 +66,15 @@ class ReceiptController extends Controller
                     LEFT JOIN public.trn_kartu_proses_dyeing dyg ON(ins.kartu_process_dyeing_id=dyg.id)
                     LEFT JOIN public.trn_memo_repair memo ON(ins.memo_repair_id=memo.id)
                     WHERE ins.status IN (".self::STATUS_APPROVED.", ".self::STATUS_APPROVED_PARTIAL.")
+                    AND EXISTS (
+                        SELECT 1 FROM public.inspecting_item ii
+                        WHERE ii.inspecting_id = ins.id
+                          AND ii.is_posted = true
+                          AND NOT EXISTS (
+                              SELECT 1 FROM public.trn_gudang_jadi gj
+                              WHERE gj.trans_from = 'INS' AND gj.id_from = ii.id
+                          )
+                    )
                     ORDER BY ins.id ASC";
 
             $data = DB::SELECT($sql);
@@ -107,6 +116,96 @@ class ReceiptController extends Controller
         }
     }
 
+    /**
+     * Sinkronisasi status data lama: header yang semua item posted-nya sudah diterima
+     * (ada di trn_gudang_jadi) tetapi statusnya belum berubah.
+     * Param JSON: update_by (wajib), dry_run (opsional, true = hanya hitung tanpa update)
+     */
+    function SyncReceivedStatus(Request $request){
+        try {
+            $update_by = (int) $request->json()->get('update_by');
+            $dryRun = filter_var($request->json()->get('dry_run', false), FILTER_VALIDATE_BOOLEAN);
+
+            // Kondisi: minimal 1 item sudah diterima & tidak ada item posted yang belum diterima
+            $insCond = "ins.status IN (".self::STATUS_APPROVED.", ".self::STATUS_APPROVED_PARTIAL.")
+                AND EXISTS (SELECT 1 FROM public.inspecting_item ii
+                            JOIN public.trn_gudang_jadi gj ON gj.trans_from = 'INS' AND gj.id_from = ii.id
+                            WHERE ii.inspecting_id = ins.id)
+                AND NOT EXISTS (SELECT 1 FROM public.inspecting_item ii
+                                WHERE ii.inspecting_id = ins.id AND ii.is_posted = true
+                                  AND NOT EXISTS (SELECT 1 FROM public.trn_gudang_jadi gj
+                                                  WHERE gj.trans_from = 'INS' AND gj.id_from = ii.id))";
+
+            $mklCond = "m.status IN (".self::STATUS_POSTED.", ".self::STATUS_POSTED_PARTIAL.")
+                AND EXISTS (SELECT 1 FROM public.inspecting_mkl_bj_items ii
+                            JOIN public.trn_gudang_jadi gj ON gj.trans_from = 'MKL' AND gj.id_from = ii.id
+                            WHERE ii.inspecting_id = m.id)
+                AND NOT EXISTS (SELECT 1 FROM public.inspecting_mkl_bj_items ii
+                                WHERE ii.inspecting_id = m.id AND ii.is_posted = true
+                                  AND NOT EXISTS (SELECT 1 FROM public.trn_gudang_jadi gj
+                                                  WHERE gj.trans_from = 'MKL' AND gj.id_from = ii.id))";
+
+            $insList = DB::select("SELECT ins.id, ins.no, ins.status FROM public.trn_inspecting ins WHERE $insCond ORDER BY ins.id");
+            $mklList = DB::select("SELECT m.id, m.no, m.status FROM public.inspecting_mkl_bj m WHERE $mklCond ORDER BY m.id");
+
+            $kpDyeing = 0;
+            $kpPrinting = 0;
+
+            if (!$dryRun) {
+                DB::beginTransaction();
+
+                // Kartu proses harus diproses sebelum status inspecting diubah (memakai kondisi status yang sama)
+                $kpDyeing = DB::update("
+                    UPDATE public.trn_kartu_proses_dyeing
+                    SET status = 13,
+                        updated_at = cast(extract(epoch from current_timestamp) as integer),
+                        updated_by = ?
+                    WHERE status < 13
+                      AND id IN (SELECT ins.kartu_process_dyeing_id FROM public.trn_inspecting ins
+                                 WHERE ins.kartu_process_dyeing_id IS NOT NULL AND $insCond)
+                ", [$update_by]);
+
+                $kpPrinting = DB::update("
+                    UPDATE public.trn_kartu_proses_printing
+                    SET status = 13,
+                        updated_at = cast(extract(epoch from current_timestamp) as integer),
+                        updated_by = ?
+                    WHERE status < 13
+                      AND id IN (SELECT ins.kartu_process_printing_id FROM public.trn_inspecting ins
+                                 WHERE ins.kartu_process_printing_id IS NOT NULL AND $insCond)
+                ", [$update_by]);
+
+                DB::update("UPDATE public.trn_inspecting ins SET status = 4 WHERE $insCond");
+                DB::update("UPDATE public.inspecting_mkl_bj m SET status = 3 WHERE $mklCond");
+
+                DB::commit();
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => $dryRun
+                    ? 'Dry run: data di bawah akan diubah statusnya.'
+                    : 'Sinkronisasi status penerimaan berhasil!',
+                'data' => [
+                    'dry_run' => $dryRun,
+                    'inspecting' => $insList,
+                    'mklbj' => $mklList,
+                    'kartu_proses_dyeing_updated' => $kpDyeing,
+                    'kartu_proses_printing_updated' => $kpPrinting,
+                ],
+            ], 200);
+        } catch (\Throwable $th) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal sinkronisasi status penerimaan! '.$th->getMessage(),
+                'data' => [],
+            ], 200);
+        }
+    }
+
     function GetMklbjHeaderList(){
         try {
             $sql = "SELECT mklbj.*, wo.no as no_wo, mo_color.color
@@ -115,6 +214,15 @@ class ReceiptController extends Controller
                     INNER JOIN public.trn_wo_color color ON(mklbj.wo_color_id=color.id)
                     INNER JOIN public.trn_mo_color mo_color ON(color.mo_color_id=mo_color.id)
                     WHERE mklbj.status IN (".self::STATUS_POSTED.", ".self::STATUS_POSTED_PARTIAL.")
+                    AND EXISTS (
+                        SELECT 1 FROM public.inspecting_mkl_bj_items ii
+                        WHERE ii.inspecting_id = mklbj.id
+                          AND ii.is_posted = true
+                          AND NOT EXISTS (
+                              SELECT 1 FROM public.trn_gudang_jadi gj
+                              WHERE gj.trans_from = 'MKL' AND gj.id_from = ii.id
+                          )
+                    )
                     ORDER BY mklbj.id ASC";
 
             $data = DB::SELECT($sql);
@@ -697,7 +805,7 @@ class ReceiptController extends Controller
                 // === UPDATE STATUS KARTU PROSES DYEING ? STATUS 13 ===
                 // =====================================================
                 $sqlKP = "
-                    SELECT kartu_process_dyeing_id
+                    SELECT kartu_process_dyeing_id, kartu_process_printing_id
                     FROM public.trn_inspecting
                     WHERE id = $id
                     LIMIT 1
@@ -705,7 +813,21 @@ class ReceiptController extends Controller
 
                 $kp = DB::selectOne($sqlKP);
 
-                if ($kp && $kp->kartu_process_dyeing_id != null) {
+                // Kartu proses printing: status 13 jika semua item sudah diterima
+                if ($remainingCount == 0 && $kp && $kp->kartu_process_printing_id != null) {
+                    $kp_printing_id = $kp->kartu_process_printing_id;
+
+                    DB::update("
+                        UPDATE public.trn_kartu_proses_printing
+                        SET status = 13,
+                            updated_at = cast(extract(epoch from current_timestamp) as integer),
+                            updated_by = $update_by
+                        WHERE id = $kp_printing_id
+                    ");
+                }
+
+                // Status 13 hanya jika semua item inspecting sudah diterima (bukan partial)
+                if ($remainingCount == 0 && $kp && $kp->kartu_process_dyeing_id != null) {
 
                     $kp_id = $kp->kartu_process_dyeing_id;
 
