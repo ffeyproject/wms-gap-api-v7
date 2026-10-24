@@ -208,9 +208,10 @@ class ReceiptController extends Controller
 
     function GetMklbjHeaderList(){
         try {
-            $sql = "SELECT mklbj.*, wo.no as no_wo, mo_color.color
+            $sql = "SELECT mklbj.*, wo.no as no_wo, mo_color.color, grg.nama_kain
                     FROM public.inspecting_mkl_bj mklbj
                     INNER JOIN public.trn_wo wo ON(mklbj.wo_id=wo.id)
+                    LEFT JOIN public.mst_greige grg ON(wo.greige_id=grg.id)
                     INNER JOIN public.trn_wo_color color ON(mklbj.wo_color_id=color.id)
                     INNER JOIN public.trn_mo_color mo_color ON(color.mo_color_id=mo_color.id)
                     WHERE mklbj.status IN (".self::STATUS_POSTED.", ".self::STATUS_POSTED_PARTIAL.")
