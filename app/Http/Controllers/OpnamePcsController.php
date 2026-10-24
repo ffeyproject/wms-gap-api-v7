@@ -305,6 +305,17 @@ class OpnamePcsController extends Controller
                 }
             }
 
+            // Hanya stok yang ada di trn_gudang_jadi yang boleh di-opname
+            if (!$id_trn_gudang_jadi) {
+                DB::rollBack();
+                return response()->json([
+                    'success'      => false,
+                    'message'      => 'Stock (' . $db_qr_code . ') tidak ditemukan di trn_gudang_jadi, tidak disimpan!',
+                    'is_not_found' => true,
+                    'data'         => null,
+                ], 200);
+            }
+
             // Ekstrak info dari barcode jika format teks pemisah '!'
             $wo_no = null;
             $reqColor = $request->json('color') ?? $request->input('color');
